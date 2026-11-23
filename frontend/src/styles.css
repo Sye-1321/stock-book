@@ -114,7 +114,7 @@ h1 {
   font-weight: 650;
 }
 
-.retry-button {
+.link-button {
   margin-top: 0.9rem;
   padding: 0.65rem 0.9rem;
   border: 1px solid #8f3028;
@@ -126,13 +126,87 @@ h1 {
   cursor: pointer;
 }
 
-.retry-button:hover {
+.link-button:hover {
   background: rgb(187 60 50 / 8%);
 }
 
-.retry-button:focus-visible {
+.link-button:focus-visible {
   outline: 0.2rem solid rgb(187 60 50 / 25%);
   outline-offset: 0.15rem;
+}
+
+.auth-panel {
+  margin-top: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid #d8e2dc;
+  border-radius: 0.8rem;
+  background: #fff;
+}
+
+.auth-panel h2,
+.auth-panel h3 {
+  margin: 0 0 1rem;
+}
+
+.auth-panel form,
+.auth-panel label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.auth-panel form {
+  gap: 1rem;
+}
+
+.auth-panel input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #aebbb4;
+  border-radius: 0.5rem;
+  font: inherit;
+}
+
+.auth-panel button {
+  width: fit-content;
+  padding: 0.7rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  color: white;
+  background: #216b49;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-panel button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.account-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.account-identifier,
+.form-message {
+  color: #526159;
+}
+
+.account-identifier {
+  margin: -0.65rem 0 0;
+}
+
+.password-form {
+  margin-top: 1.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #d8e2dc;
+}
+
+.form-message {
+  margin: 1rem 0 0;
 }
 
 @media (max-width: 36rem) {

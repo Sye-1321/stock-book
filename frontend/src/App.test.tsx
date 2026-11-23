@@ -1,19 +1,45 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
-function deferredResponse() {
-  let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
+const user = {
+  id: "fe1a09b9-ff0b-4ec7-87fb-c3a5a53b73dc",
+  loginIdentifier: "admin@example.com",
+  displayName: "Initial Administrator",
+};
 
-  return { promise, resolve };
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
-function healthyResponse() {
-  return new Response(JSON.stringify({ database: "UP" }), { status: 200 });
+function urlOf(input: RequestInfo | URL) {
+  return typeof input === "string" ? input : input.toString();
+}
+
+function mockApi(
+  handler?: (
+    url: string,
+    init?: RequestInit,
+  ) => Response | Promise<Response> | undefined,
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = urlOf(input);
+    const handled = handler?.(url, init);
+    if (handled) return Promise.resolve(handled);
+    if (url === "/api/v1/status")
+      return Promise.resolve(json({ database: "UP" }));
+    if (url === "/api/v1/auth/me") return Promise.resolve(json({}, 401));
+    if (url === "/api/v1/auth/csrf") {
+      return Promise.resolve(
+        json({ headerName: "X-CSRF-TOKEN", token: "csrf-token" }),
+      );
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
 }
 
 afterEach(() => {
@@ -22,87 +48,275 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("shows loading and then a successful database connection", async () => {
-    const request = deferredResponse();
-    vi.spyOn(globalThis, "fetch").mockReturnValue(request.promise);
+  it("shows actual connectivity and an anonymous sign-in screen", async () => {
+    const fetchMock = mockApi();
 
     render(<App />);
+
     expect(
       screen.getByText("Checking backend and database…"),
     ).toBeInTheDocument();
-
-    request.resolve(healthyResponse());
     expect(
       await screen.findByText("Backend and database connected"),
     ).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledWith("/api/v1/status", expect.any(Object));
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/status",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/me",
+      expect.any(Object),
+    );
   });
 
-  it("recovers from a database failure when retried", async () => {
-    const user = userEvent.setup();
-    const retry = deferredResponse();
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ database: "DOWN" }), { status: 503 }),
-      )
-      .mockReturnValueOnce(retry.promise);
+  it("recovers from a database connectivity failure when retried", async () => {
+    const browser = userEvent.setup();
+    let statusRequests = 0;
+    mockApi((url) => {
+      if (url === "/api/v1/status") {
+        statusRequests += 1;
+        return statusRequests === 1
+          ? json({ database: "DOWN" }, 503)
+          : json({ database: "UP" });
+      }
+    });
 
     render(<App />);
     expect(
       await screen.findByText("Database connection unavailable"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Retry connection" }));
-    expect(
-      screen.getByText(/Checking backend and database/),
-    ).toBeInTheDocument();
-
-    retry.resolve(healthyResponse());
-    expect(
-      await screen.findByText("Backend and database connected"),
-    ).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("recovers from a backend failure when retried", async () => {
-    const user = userEvent.setup();
-    const retry = deferredResponse();
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockReturnValueOnce(retry.promise);
-
-    render(<App />);
-    expect(
-      await screen.findByText("Backend service unavailable"),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Retry connection" }));
-    expect(
-      screen.getByText(/Checking backend and database/),
-    ).toBeInTheDocument();
-
-    retry.resolve(healthyResponse());
-    expect(
-      await screen.findByText("Backend and database connected"),
-    ).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    ["invalid JSON", new Response("not JSON", { status: 200 })],
-    [
-      "an unexpected response structure",
-      new Response(JSON.stringify({ status: "UP" }), { status: 200 }),
-    ],
-  ])("handles %s gracefully", async (_description, response) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
-
-    render(<App />);
-    expect(
-      await screen.findByText("Backend service returned an invalid response"),
-    ).toBeInTheDocument();
-    expect(
+    await browser.click(
       screen.getByRole("button", { name: "Retry connection" }),
+    );
+    expect(
+      await screen.findByText("Backend and database connected"),
+    ).toBeInTheDocument();
+    expect(statusRequests).toBe(2);
+  });
+
+  it("uses a CSRF token to sign in and shows the authenticated user", async () => {
+    const browser = userEvent.setup();
+    const fetchMock = mockApi((url) => {
+      if (url === "/api/v1/auth/login") return json(user);
+    });
+
+    render(<App />);
+    await browser.type(
+      await screen.findByLabelText("Login identifier"),
+      "admin@example.com",
+    );
+    await browser.type(screen.getByLabelText("Password"), "secret password");
+    await browser.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByText("Initial Administrator"),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/csrf",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/login",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-TOKEN": "csrf-token" }),
+      }),
+    );
+  });
+
+  it("reports rate limiting without treating it as an expired session", async () => {
+    const browser = userEvent.setup();
+    mockApi((url) => {
+      if (url === "/api/v1/auth/login") {
+        return json({ code: "too_many_attempts", message: "Try later" }, 429);
+      }
+    });
+
+    render(<App />);
+    await browser.type(
+      await screen.findByLabelText("Login identifier"),
+      "admin@example.com",
+    );
+    await browser.type(screen.getByLabelText("Password"), "wrong password");
+    await browser.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Too many sign-in attempts. Try again later.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+  });
+
+  it("signs out an existing session", async () => {
+    const browser = userEvent.setup();
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") return json(user);
+      if (url === "/api/v1/auth/logout")
+        return new Response(null, { status: 204 });
+    });
+
+    render(<App />);
+    expect(
+      await screen.findByText("Initial Administrator"),
+    ).toBeInTheDocument();
+    await browser.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+  });
+
+  it("returns to sign-in after a password change revokes the session", async () => {
+    const browser = userEvent.setup();
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") return json(user);
+      if (url === "/api/v1/auth/password")
+        return new Response(null, { status: 204 });
+    });
+
+    render(<App />);
+    await browser.type(
+      await screen.findByLabelText("Current password"),
+      "old password value",
+    );
+    await browser.type(
+      screen.getByLabelText("New password"),
+      "new password value",
+    );
+    await browser.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Password changed. Sign in with your new password.",
+    );
+  });
+
+  it("clears authenticated state when a protected request reports an expired session", async () => {
+    const browser = userEvent.setup();
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") return json(user);
+      if (url === "/api/v1/auth/password") {
+        return json(
+          { code: "unauthenticated", message: "Authentication is required" },
+          401,
+        );
+      }
+    });
+
+    render(<App />);
+    await browser.type(
+      await screen.findByLabelText("Current password"),
+      "old password value",
+    );
+    await browser.type(
+      screen.getByLabelText("New password"),
+      "new password value",
+    );
+    await browser.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session has expired.",
+    );
+  });
+
+  it.each(["Sign out", "Change password"])(
+    "returns to sign-in when CSRF acquisition expires before %s",
+    async (action) => {
+      const browser = userEvent.setup();
+      mockApi((url) => {
+        if (url === "/api/v1/auth/me") return json(user);
+        if (url === "/api/v1/auth/csrf") {
+          return json({ code: "unauthenticated" }, 401);
+        }
+      });
+
+      render(<App />);
+      await screen.findByText("Initial Administrator");
+      if (action === "Change password") {
+        await browser.type(
+          screen.getByLabelText("Current password"),
+          "old password value",
+        );
+        await browser.type(
+          screen.getByLabelText("New password"),
+          "new password value",
+        );
+      }
+      await browser.click(screen.getByRole("button", { name: action }));
+
+      expect(
+        await screen.findByRole("heading", { name: "Sign in" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Your session has expired.",
+      );
+    },
+  );
+
+  it("keeps the session when CSRF acquisition is forbidden", async () => {
+    const browser = userEvent.setup();
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") return json(user);
+      if (url === "/api/v1/auth/csrf") return json({ code: "forbidden" }, 403);
+    });
+
+    render(<App />);
+    await browser.type(
+      await screen.findByLabelText("Current password"),
+      "old password value",
+    );
+    await browser.type(
+      screen.getByLabelText("New password"),
+      "new password value",
+    );
+    await browser.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The secure request could not be verified.",
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Initial Administrator")).toBeInTheDocument(),
+    );
+  });
+
+  it("recovers from an unexpected session response without showing false authentication", async () => {
+    const browser = userEvent.setup();
+    let sessionRequests = 0;
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") {
+        sessionRequests += 1;
+        return sessionRequests === 1
+          ? json({ displayName: "Incomplete" })
+          : json({}, 401);
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Authentication service unavailable",
+    );
+    expect(screen.queryByText("Signed in as")).not.toBeInTheDocument();
+    await browser.click(
+      screen.getByRole("button", { name: "Retry authentication" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
   });
 });

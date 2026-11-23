@@ -19,6 +19,12 @@ Start PostgreSQL:
 docker compose up -d postgres
 ```
 
+Before the first sign-in, provision the initial administrator. With a secure console, the task prompts for the login identifier, display name, password, and password confirmation. In a non-interactive environment, supply `STOCKBOOK_ADMIN_LOGIN`, `STOCKBOOK_ADMIN_DISPLAY_NAME`, and `STOCKBOOK_ADMIN_PASSWORD` as process environment variables. The task accepts the credentials only when no users exist:
+
+```bash
+./gradlew :backend:provisionAdmin
+```
+
 Start the backend from the repository root:
 
 ```bash
@@ -34,6 +40,8 @@ pnpm dev
 ```
 
 Open `http://localhost:5173`. Vite proxies relative `/api` requests to the backend. Database settings default to the Compose values and can be overridden with `DB_URL`, `DB_USER`, and `DB_PASSWORD`.
+
+Sign in with the provisioned account. Sessions are stored in PostgreSQL, expire after 30 minutes of inactivity or 12 hours after authentication, and are revoked after a password change. The `prod` Spring profile marks the session cookie `Secure`; local HTTP development leaves it unset.
 
 The connectivity endpoint is `GET /api/v1/status`; it returns 200 only when PostgreSQL responds. The independent process liveness endpoint is `GET /api/v1/liveness`.
 
