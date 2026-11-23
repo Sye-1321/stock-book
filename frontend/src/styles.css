@@ -114,6 +114,27 @@ h1 {
   font-weight: 650;
 }
 
+.retry-button {
+  margin-top: 0.9rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #8f3028;
+  border-radius: 0.55rem;
+  color: #8f3028;
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.retry-button:hover {
+  background: rgb(187 60 50 / 8%);
+}
+
+.retry-button:focus-visible {
+  outline: 0.2rem solid rgb(187 60 50 / 25%);
+  outline-offset: 0.15rem;
+}
+
 @media (max-width: 36rem) {
   main {
     padding: 1rem;

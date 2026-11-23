@@ -3,6 +3,8 @@ package io.github.sye1321.stockbook.system;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationState;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,7 +35,12 @@ class DatabaseIntegrationTest {
     void connectsToPostgresAndAppliesTheInitialMigration() {
         assertThat(jdbcClient.sql("select version()").query(String.class).single())
                 .startsWith("PostgreSQL");
-        assertThat(flyway.info().applied()).hasSize(1);
+        assertThat(flyway.info().all())
+                .anySatisfy(migration -> {
+                    assertThat(migration.getVersion()).isEqualTo(MigrationVersion.fromVersion("1"));
+                    assertThat(migration.getState()).isEqualTo(MigrationState.SUCCESS);
+                })
+                .allMatch(migration -> !migration.getState().isFailed());
         assertThat(databaseStatusChecker.isAvailable()).isTrue();
     }
 }

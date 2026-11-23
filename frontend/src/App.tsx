@@ -9,8 +9,17 @@ type StatusResponse = {
   database: "UP" | "DOWN";
 };
 
+function isStatusResponse(value: unknown): value is StatusResponse {
+  if (typeof value !== "object" || value === null || !("database" in value)) {
+    return false;
+  }
+
+  return value.database === "UP" || value.database === "DOWN";
+}
+
 export default function App() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -21,26 +30,50 @@ export default function App() {
           headers: { Accept: "application/json" },
           signal: controller.signal,
         });
-        const status = (await response.json()) as StatusResponse;
+        const status: unknown = await response.json();
+
+        if (!isStatusResponse(status)) {
+          setState({
+            kind: "unhealthy",
+            message: "Backend service returned an invalid response",
+          });
+          return;
+        }
 
         if (response.ok && status.database === "UP") {
           setState({ kind: "healthy" });
-        } else {
+        } else if (status.database === "DOWN") {
           setState({
             kind: "unhealthy",
             message: "Database connection unavailable",
+          });
+        } else {
+          setState({
+            kind: "unhealthy",
+            message: "Backend service unavailable",
           });
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
-        setState({ kind: "unhealthy", message: "Backend service unavailable" });
+        setState({
+          kind: "unhealthy",
+          message:
+            error instanceof SyntaxError
+              ? "Backend service returned an invalid response"
+              : "Backend service unavailable",
+        });
       }
     }
 
     void checkStatus();
     return () => controller.abort();
-  }, []);
+  }, [attempt]);
+
+  function retryConnection() {
+    setState({ kind: "loading" });
+    setAttempt((currentAttempt) => currentAttempt + 1);
+  }
 
   return (
     <main>
@@ -66,7 +99,16 @@ export default function App() {
               <p className="status-value">Backend and database connected</p>
             )}
             {state.kind === "unhealthy" && (
-              <p className="status-value">{state.message}</p>
+              <>
+                <p className="status-value">{state.message}</p>
+                <button
+                  className="retry-button"
+                  type="button"
+                  onClick={retryConnection}
+                >
+                  Retry connection
+                </button>
+              </>
             )}
           </div>
         </div>
