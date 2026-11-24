@@ -16,7 +16,7 @@ describe("system connectivity", () => {
     render(<App />);
 
     expect(
-      screen.getByText("Checking backend and databaseâ€¦"),
+      screen.getByText("Checking backend and database…"),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("Backend and database connected"),

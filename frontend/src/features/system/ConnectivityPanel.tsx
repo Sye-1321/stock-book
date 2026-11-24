@@ -67,7 +67,7 @@ export default function ConnectivityPanel() {
       <div>
         <p className="status-label">System connectivity</p>
         {connectivity.kind === "loading" && (
-          <p className="status-value">Checking backend and databaseâ€¦</p>
+          <p className="status-value">Checking backend and database…</p>
         )}
         {connectivity.kind === "healthy" && (
           <p className="status-value">Backend and database connected</p>

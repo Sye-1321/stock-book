@@ -4,6 +4,7 @@ import { CsrfRequestError, fetchCsrf } from "../auth/csrf";
 import { isUser, Role, User } from "../auth/types";
 
 type StaffAccount = User & { active: boolean };
+type AccountDraft = Pick<StaffAccount, "displayName" | "role" | "active">;
 
 type Props = {
   currentUser: User;
@@ -20,6 +21,7 @@ export default function StaffManagement({
   onSessionExpired,
 }: Props) {
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, AccountDraft>>({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -40,6 +42,7 @@ export default function StaffManagement({
         const body = await readJson(response);
         if (response.ok && Array.isArray(body) && body.every(isStaffAccount)) {
           setAccounts(body);
+          setDrafts({});
           setMessage(undefined);
         } else {
           setMessage(
@@ -107,14 +110,22 @@ export default function StaffManagement({
     id: string,
     changes: Partial<Pick<StaffAccount, "displayName" | "role" | "active">>,
   ) {
-    setAccounts((current) =>
-      current.map((account) =>
-        account.id === id ? { ...account, ...changes } : account,
-      ),
-    );
+    const account = accounts.find((candidate) => candidate.id === id);
+    if (!account) return;
+    setDrafts((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? {
+          displayName: account.displayName,
+          role: account.role,
+          active: account.active,
+        }),
+        ...changes,
+      },
+    }));
   }
 
-  async function saveAccount(account: StaffAccount) {
+  async function saveAccount(account: StaffAccount, draft: AccountDraft) {
     setBusy(true);
     setMessage(undefined);
     try {
@@ -127,9 +138,9 @@ export default function StaffManagement({
           [csrf.headerName]: csrf.token,
         },
         body: JSON.stringify({
-          displayName: account.displayName,
-          role: account.role,
-          active: account.active,
+          displayName: draft.displayName,
+          role: draft.role,
+          active: draft.active,
         }),
       });
       const body = await readJson(response);
@@ -141,6 +152,11 @@ export default function StaffManagement({
             existing.id === body.id ? body : existing,
           ),
         );
+        setDrafts((current) => {
+          const next = { ...current };
+          delete next[body.id];
+          return next;
+        });
         if (
           body.id === currentUser.id &&
           (!body.active || body.role !== "ADMIN")
@@ -211,54 +227,58 @@ export default function StaffManagement({
         {!loading && accounts.length === 0 && (
           <p>No staff accounts are available.</p>
         )}
-        {accounts.map((account) => (
-          <div className="staff-account" key={account.id}>
-            <p className="account-identifier">{account.loginIdentifier}</p>
-            <label>
-              Display name for {account.loginIdentifier}
-              <input
-                value={account.displayName}
-                maxLength={200}
-                onChange={(event) =>
-                  editAccount(account.id, {
-                    displayName: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <label>
-              Role for {account.loginIdentifier}
-              <select
-                value={account.role}
-                onChange={(event) =>
-                  editAccount(account.id, {
-                    role: event.target.value as Role,
-                  })
-                }
+        {accounts.map((account) => {
+          const draft = drafts[account.id] ?? account;
+          return (
+            <div className="staff-account" key={account.id}>
+              <p className="account-identifier">{account.loginIdentifier}</p>
+              <label>
+                Display name for {account.loginIdentifier}
+                <input
+                  value={draft.displayName}
+                  maxLength={200}
+                  onChange={(event) =>
+                    editAccount(account.id, {
+                      displayName: event.target.value,
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Role for {account.loginIdentifier}
+                <select
+                  value={draft.role}
+                  onChange={(event) =>
+                    editAccount(account.id, {
+                      role: event.target.value as Role,
+                    })
+                  }
+                >
+                  <option value="STAFF">Staff</option>
+                  <option value="ADMIN">Administrator</option>
+                </select>
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={draft.active}
+                  onChange={(event) =>
+                    editAccount(account.id, { active: event.target.checked })
+                  }
+                />
+                Active
+              </label>
+              {drafts[account.id] && <p>Unsaved changes</p>}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => saveAccount(account, draft)}
               >
-                <option value="STAFF">Staff</option>
-                <option value="ADMIN">Administrator</option>
-              </select>
-            </label>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={account.active}
-                onChange={(event) =>
-                  editAccount(account.id, { active: event.target.checked })
-                }
-              />
-              Active
-            </label>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => saveAccount(account)}
-            >
-              Save {account.loginIdentifier}
-            </button>
-          </div>
-        ))}
+                Save {account.loginIdentifier}
+              </button>
+            </div>
+          );
+        })}
       </div>
       {message && (
         <p className="form-message" role="status">

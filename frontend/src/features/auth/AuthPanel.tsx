@@ -22,7 +22,7 @@ export default function AuthPanel({
 }: Props) {
   return (
     <section className="auth-panel" aria-label="Account">
-      {auth.kind === "loading" && <p>Checking your sessionâ€¦</p>}
+      {auth.kind === "loading" && <p>Checking your session…</p>}
       {auth.kind === "unavailable" && (
         <>
           <p role="alert">{auth.message}</p>
@@ -48,7 +48,7 @@ export default function AuthPanel({
             />
           </label>
           <button type="submit" disabled={busy}>
-            {busy ? "Signing inâ€¦" : "Sign in"}
+            {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
       )}
@@ -86,7 +86,7 @@ export default function AuthPanel({
               />
             </label>
             <button type="submit" disabled={busy}>
-              {busy ? "Savingâ€¦" : "Change password"}
+              {busy ? "Saving…" : "Change password"}
             </button>
           </form>
         </div>

@@ -9,28 +9,37 @@ export function useAuthentication() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const sessionRevalidationInFlight = useRef(false);
+  const sessionRequestGeneration = useRef(0);
+
+  const invalidateSessionRequests = useCallback(() => {
+    sessionRequestGeneration.current += 1;
+  }, []);
 
   const expireSession = useCallback(
     (sessionMessage = "Your session has expired. Please sign in again.") => {
+      invalidateSessionRequests();
       setAuth({ kind: "anonymous" });
       setMessage(sessionMessage);
     },
-    [],
+    [invalidateSessionRequests],
   );
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestGeneration = sessionRequestGeneration.current;
     void (async () => {
       try {
         const response = await fetch("/api/v1/auth/me", {
           headers: { Accept: "application/json" },
           signal: controller.signal,
         });
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         if (response.status === 401) {
           setAuth({ kind: "anonymous" });
           return;
         }
         const body = await readJson(response);
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         if (response.ok && isUser(body)) {
           setAuth({ kind: "authenticated", user: body });
         } else {
@@ -42,6 +51,7 @@ export function useAuthentication() {
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         setAuth({
           kind: "unavailable",
           message: "Authentication service unavailable",
@@ -58,16 +68,19 @@ export function useAuthentication() {
     async function revalidateSession() {
       if (sessionRevalidationInFlight.current) return;
       sessionRevalidationInFlight.current = true;
+      const requestGeneration = sessionRequestGeneration.current;
       try {
         const response = await fetch("/api/v1/auth/me", {
           headers: { Accept: "application/json" },
           signal: controller.signal,
         });
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         if (response.status === 401) {
           expireSession();
           return;
         }
         const body = await readJson(response);
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         if (response.ok && isUser(body)) {
           setAuth({ kind: "authenticated", user: body });
         } else {
@@ -79,6 +92,7 @@ export function useAuthentication() {
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
+        if (requestGeneration !== sessionRequestGeneration.current) return;
         setAuth({
           kind: "unavailable",
           message: "Authentication service unavailable",
@@ -102,6 +116,7 @@ export function useAuthentication() {
   }, [auth.kind, expireSession]);
 
   function retry() {
+    invalidateSessionRequests();
     setAuth({ kind: "loading" });
     setMessage(undefined);
     setAttempt((current) => current + 1);
@@ -138,6 +153,7 @@ export function useAuthentication() {
       });
       const body = await readJson(response);
       if (response.ok && isUser(body)) {
+        invalidateSessionRequests();
         setAuth({ kind: "authenticated", user: body });
       } else {
         const error = isRecord(body) ? (body as ApiError) : undefined;
@@ -164,6 +180,7 @@ export function useAuthentication() {
         headers: { [csrf.headerName]: csrf.token },
       });
       if (response.ok || response.status === 401) {
+        invalidateSessionRequests();
         setAuth({ kind: "anonymous" });
       } else {
         setMessage(
@@ -201,6 +218,7 @@ export function useAuthentication() {
       });
       if (response.ok) {
         form.reset();
+        invalidateSessionRequests();
         setAuth({ kind: "anonymous" });
         setMessage("Password changed. Sign in with your new password.");
         return;

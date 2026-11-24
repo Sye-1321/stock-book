@@ -105,6 +105,23 @@ class StaffManagementIntegrationTest {
         mockMvc.perform(get("/api/v1/staff").cookie(staff.cookie())).andExpect(status().isForbidden());
 
         BrowserSession staffWithCsrf = csrf(staff.cookie());
+        mockMvc.perform(post("/api/v1/staff")
+                        .cookie(staffWithCsrf.cookie())
+                        .header(staffWithCsrf.headerName(), staffWithCsrf.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateAccount(
+                                "blocked@example.com", "Blocked Account", STAFF_PASSWORD, AccountRole.STAFF))))
+                .andExpect(status().isForbidden());
+
+        UserAccount staffAccount = userAccountRepository.findByLoginIdentifier("staff@example.com").orElseThrow();
+        mockMvc.perform(put("/api/v1/staff/{id}", staffAccount.id())
+                        .cookie(staffWithCsrf.cookie())
+                        .header(staffWithCsrf.headerName(), staffWithCsrf.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateAccount("Unauthorized Update", AccountRole.ADMIN, true))))
+                .andExpect(status().isForbidden());
+
         mockMvc.perform(post("/api/v1/auth/password")
                         .cookie(staffWithCsrf.cookie())
                         .header(staffWithCsrf.headerName(), staffWithCsrf.token())
@@ -224,8 +241,8 @@ class StaffManagementIntegrationTest {
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsByteArray());
         return new BrowserSession(
                 requireSessionCookie(result, cookie),
-                json.get("headerName").asText(),
-                json.get("token").asText());
+                json.get("headerName").stringValue(),
+                json.get("token").stringValue());
     }
 
     private static Cookie requireSessionCookie(MvcResult result, Cookie fallback) {

@@ -61,16 +61,60 @@ describe("staff management", () => {
       "ADMIN",
     );
     await browser.click(screen.getByLabelText("Active"));
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
     await browser.click(
       screen.getByRole("button", { name: "Save staff@example.com" }),
     );
     expect(
       await screen.findByText("Staff account updated."),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/v1/staff/${createdAccount.id}`,
       expect.objectContaining({ method: "PUT" }),
     );
+  });
+
+  it("keeps failed account changes marked as unsaved", async () => {
+    const browser = userEvent.setup();
+    const existingAccount = {
+      id: "60db3370-9bdd-48f1-a5aa-839bd13f55d1",
+      loginIdentifier: "staff@example.com",
+      displayName: "Warehouse Staff",
+      role: "STAFF",
+      active: true,
+    } as const;
+    mockApi((url, init) => {
+      if (url === "/api/v1/auth/me") return json(user);
+      if (url === "/api/v1/staff" && !init?.method) {
+        return json([existingAccount]);
+      }
+      if (
+        url === `/api/v1/staff/${existingAccount.id}` &&
+        init?.method === "PUT"
+      ) {
+        return json({ code: "conflict", message: "Update rejected" }, 409);
+      }
+    });
+
+    render(<App />);
+    const displayName = await screen.findByLabelText(
+      "Display name for staff@example.com",
+    );
+    await browser.clear(displayName);
+    await browser.type(displayName, "Changed locally");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+    await browser.click(
+      screen.getByRole("button", { name: "Save staff@example.com" }),
+    );
+
+    expect(await screen.findByText("Update rejected")).toBeInTheDocument();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(displayName).toHaveValue("Changed locally");
+    expect(
+      screen.queryByText("Staff account updated."),
+    ).not.toBeInTheDocument();
   });
 
   it("does not expose staff management to staff users", async () => {

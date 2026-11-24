@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -86,6 +87,42 @@ describe("authentication", () => {
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
+  });
+
+  it("ignores an out-of-order session response after sign-out", async () => {
+    const browser = userEvent.setup();
+    let sessionRequests = 0;
+    let resolveRevalidation!: (response: Response) => void;
+    const revalidation = new Promise<Response>((resolve) => {
+      resolveRevalidation = resolve;
+    });
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? json(user) : revalidation;
+      }
+      if (url === "/api/v1/auth/logout") {
+        return new Response(null, { status: 204 });
+      }
+    });
+
+    render(<App />);
+    expect(
+      await screen.findByText("Initial Administrator"),
+    ).toBeInTheDocument();
+    fireEvent.focus(window);
+    await waitFor(() => expect(sessionRequests).toBe(2));
+    await browser.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+
+    await act(async () => resolveRevalidation(json(user)));
+
+    expect(
+      screen.getByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Initial Administrator")).not.toBeInTheDocument();
   });
 
   it("revalidates an expired session when the user returns to the window", async () => {
