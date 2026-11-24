@@ -61,9 +61,11 @@ public class AuthController {
 
     public record PasswordChangeRequest(String currentPassword, String newPassword) {}
 
-    public record AuthenticatedUserResponse(UUID id, String loginIdentifier, String displayName) {
+    public record AuthenticatedUserResponse(
+            UUID id, String loginIdentifier, String displayName, AccountRole role) {
         static AuthenticatedUserResponse from(StockBookUserDetails principal) {
-            return new AuthenticatedUserResponse(principal.id(), principal.username(), principal.displayName());
+            return new AuthenticatedUserResponse(
+                    principal.id(), principal.username(), principal.displayName(), principal.role());
         }
     }
 }

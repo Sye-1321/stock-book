@@ -1,6 +1,7 @@
 package io.github.sye1321.stockbook.identity.provisioning;
 
 import io.github.sye1321.stockbook.identity.LoginIdentifier;
+import io.github.sye1321.stockbook.identity.AccountRole;
 import io.github.sye1321.stockbook.identity.UserAccount;
 import io.github.sye1321.stockbook.identity.UserAccountRepository;
 import java.nio.CharBuffer;
@@ -58,6 +59,7 @@ public class InitialAdminProvisioningService {
                 normalizedDisplayName,
                 passwordHash,
                 true,
+                AccountRole.ADMIN,
                 0,
                 now,
                 now,

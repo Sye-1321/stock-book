@@ -138,6 +138,7 @@ class AuthenticationIntegrationTest {
         MvcResult login = performLogin(anonymous, LOGIN, PASSWORD)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.displayName").value("Initial Administrator"))
+                .andExpect(jsonPath("$.role").value("ADMIN"))
                 .andReturn();
         Cookie authenticatedCookie = requireSessionCookie(login, anonymous.cookie());
         assertThat(authenticatedCookie.getValue()).isNotEqualTo(anonymous.cookie().getValue());

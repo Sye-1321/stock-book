@@ -14,7 +14,7 @@ import org.springframework.stereotype.Repository;
 public class UserAccountRepository {
 
     private static final String SELECT_COLUMNS = """
-            select id, login_identifier, display_name, password_hash, active, session_version,
+            select id, login_identifier, display_name, password_hash, active, role, session_version,
                    created_at, updated_at, password_changed_at
             from app_user
             """;
@@ -53,15 +53,29 @@ public class UserAccountRepository {
         return jdbcClient.sql("select count(*) from app_user").query(Long.class).single();
     }
 
+    public java.util.List<UserAccount> findAll() {
+        return jdbcClient
+                .sql(SELECT_COLUMNS + " order by display_name, login_identifier")
+                .query(UserAccountRepository::mapUser)
+                .list();
+    }
+
+    public long countActiveAdministrators() {
+        return jdbcClient
+                .sql("select count(*) from app_user where active and role = 'ADMIN'")
+                .query(Long.class)
+                .single();
+    }
+
     public void insert(UserAccount user) {
         jdbcClient
                 .sql("""
                         insert into app_user (
                             id, login_identifier, display_name, password_hash, active,
-                            session_version, created_at, updated_at, password_changed_at
+                            role, session_version, created_at, updated_at, password_changed_at
                         ) values (
                             :id, :loginIdentifier, :displayName, :passwordHash, :active,
-                            :sessionVersion, :createdAt, :updatedAt, :passwordChangedAt
+                            :role, :sessionVersion, :createdAt, :updatedAt, :passwordChangedAt
                         )
                         """)
                 .param("id", user.id())
@@ -69,6 +83,7 @@ public class UserAccountRepository {
                 .param("displayName", user.displayName())
                 .param("passwordHash", user.passwordHash())
                 .param("active", user.active())
+                .param("role", user.role().name())
                 .param("sessionVersion", user.sessionVersion())
                 .param("createdAt", toDatabaseTimestamp(user.createdAt()))
                 .param("updatedAt", toDatabaseTimestamp(user.updatedAt()))
@@ -113,6 +128,31 @@ public class UserAccountRepository {
         }
     }
 
+    public void updateStaffAccount(UUID id, String displayName, AccountRole role, boolean active, Instant changedAt) {
+        int updated = jdbcClient
+                .sql("""
+                        update app_user
+                        set display_name = :displayName,
+                            role = :role,
+                            active = :active,
+                            updated_at = :changedAt,
+                            session_version = case
+                                when role <> :role or active <> :active then session_version + 1
+                                else session_version
+                            end
+                        where id = :id
+                        """)
+                .param("id", id)
+                .param("displayName", displayName)
+                .param("role", role.name())
+                .param("active", active)
+                .param("changedAt", toDatabaseTimestamp(changedAt))
+                .update();
+        if (updated != 1) {
+            throw new IllegalStateException("User account was not updated");
+        }
+    }
+
     private static UserAccount mapUser(ResultSet resultSet, int rowNumber) throws SQLException {
         return new UserAccount(
                 resultSet.getObject("id", UUID.class),
@@ -120,6 +160,7 @@ public class UserAccountRepository {
                 resultSet.getString("display_name"),
                 resultSet.getString("password_hash"),
                 resultSet.getBoolean("active"),
+                AccountRole.valueOf(resultSet.getString("role")),
                 resultSet.getLong("session_version"),
                 resultSet.getObject("created_at", OffsetDateTime.class).toInstant(),
                 resultSet.getObject("updated_at", OffsetDateTime.class).toInstant(),

@@ -82,7 +82,11 @@ public class JsonLoginAuthenticationFilter extends AbstractAuthenticationProcess
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         objectMapper.writeValue(
                 response.getOutputStream(),
-                new AuthenticatedUserResponse(principal.id().toString(), principal.username(), principal.displayName()));
+                new AuthenticatedUserResponse(
+                        principal.id().toString(),
+                        principal.username(),
+                        principal.displayName(),
+                        principal.role().name()));
     }
 
     private void writeFailure(
@@ -113,7 +117,8 @@ public class JsonLoginAuthenticationFilter extends AbstractAuthenticationProcess
 
     public record LoginRequest(String loginIdentifier, String password) {}
 
-    public record AuthenticatedUserResponse(String id, String loginIdentifier, String displayName) {}
+    public record AuthenticatedUserResponse(
+            String id, String loginIdentifier, String displayName, String role) {}
 
     public record ErrorResponse(String code, String message) {}
 

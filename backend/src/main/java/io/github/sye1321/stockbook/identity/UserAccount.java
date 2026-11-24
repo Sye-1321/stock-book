@@ -9,6 +9,7 @@ public record UserAccount(
         String displayName,
         String passwordHash,
         boolean active,
+        AccountRole role,
         long sessionVersion,
         Instant createdAt,
         Instant updatedAt,

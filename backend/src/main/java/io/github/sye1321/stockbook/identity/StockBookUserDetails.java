@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.security.core.CredentialsContainer;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 public final class StockBookUserDetails implements UserDetails, CredentialsContainer, Serializable {
@@ -18,6 +19,7 @@ public final class StockBookUserDetails implements UserDetails, CredentialsConta
     private final String username;
     private final String displayName;
     private final boolean enabled;
+    private final AccountRole role;
     private final long sessionVersion;
     private transient String password;
 
@@ -27,12 +29,14 @@ public final class StockBookUserDetails implements UserDetails, CredentialsConta
             String displayName,
             String password,
             boolean enabled,
+            AccountRole role,
             long sessionVersion) {
         this.id = id;
         this.username = username;
         this.displayName = displayName;
         this.password = password;
         this.enabled = enabled;
+        this.role = role;
         this.sessionVersion = sessionVersion;
     }
 
@@ -43,6 +47,7 @@ public final class StockBookUserDetails implements UserDetails, CredentialsConta
                 user.displayName(),
                 user.passwordHash(),
                 user.active(),
+                user.role(),
                 user.sessionVersion());
     }
 
@@ -62,9 +67,15 @@ public final class StockBookUserDetails implements UserDetails, CredentialsConta
         return sessionVersion;
     }
 
+    public AccountRole role() {
+        // Accounts that predate role support were all initial administrators. This fallback
+        // keeps an already-serialized session usable while its database row is migrated.
+        return role == null ? AccountRole.ADMIN : role;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of();
+        return List.of(new SimpleGrantedAuthority("ROLE_" + role().name()));
     }
 
     @Override

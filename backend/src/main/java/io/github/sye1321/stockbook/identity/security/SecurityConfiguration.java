@@ -120,6 +120,8 @@ public class SecurityConfiguration {
                         .permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login")
                         .permitAll()
+                        .requestMatchers("/api/v1/staff/**")
+                        .hasRole("ADMIN")
                         .anyRequest()
                         .authenticated())
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository)

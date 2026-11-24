@@ -7,102 +7,15 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import App from "./App";
-
-const user = {
-  id: "fe1a09b9-ff0b-4ec7-87fb-c3a5a53b73dc",
-  loginIdentifier: "admin@example.com",
-  displayName: "Initial Administrator",
-};
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function urlOf(input: RequestInfo | URL) {
-  return typeof input === "string" ? input : input.toString();
-}
-
-function mockApi(
-  handler?: (
-    url: string,
-    init?: RequestInit,
-  ) => Response | Promise<Response> | undefined,
-) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-    const url = urlOf(input);
-    const handled = handler?.(url, init);
-    if (handled) return Promise.resolve(handled);
-    if (url === "/api/v1/status")
-      return Promise.resolve(json({ database: "UP" }));
-    if (url === "/api/v1/auth/me") return Promise.resolve(json({}, 401));
-    if (url === "/api/v1/auth/csrf") {
-      return Promise.resolve(
-        json({ headerName: "X-CSRF-TOKEN", token: "csrf-token" }),
-      );
-    }
-    throw new Error(`Unexpected request: ${url}`);
-  });
-}
+import App from "../../app/App";
+import { json, mockApi, user } from "../../test/apiMock";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-describe("App", () => {
-  it("shows actual connectivity and an anonymous sign-in screen", async () => {
-    const fetchMock = mockApi();
-
-    render(<App />);
-
-    expect(
-      screen.getByText("Checking backend and database…"),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText("Backend and database connected"),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("heading", { name: "Sign in" }),
-    ).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/status",
-      expect.any(Object),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/auth/me",
-      expect.any(Object),
-    );
-  });
-
-  it("recovers from a database connectivity failure when retried", async () => {
-    const browser = userEvent.setup();
-    let statusRequests = 0;
-    mockApi((url) => {
-      if (url === "/api/v1/status") {
-        statusRequests += 1;
-        return statusRequests === 1
-          ? json({ database: "DOWN" }, 503)
-          : json({ database: "UP" });
-      }
-    });
-
-    render(<App />);
-    expect(
-      await screen.findByText("Database connection unavailable"),
-    ).toBeInTheDocument();
-    await browser.click(
-      screen.getByRole("button", { name: "Retry connection" }),
-    );
-    expect(
-      await screen.findByText("Backend and database connected"),
-    ).toBeInTheDocument();
-    expect(statusRequests).toBe(2);
-  });
-
+describe("authentication", () => {
   it("uses a CSRF token to sign in and shows the authenticated user", async () => {
     const browser = userEvent.setup();
     const fetchMock = mockApi((url) => {
@@ -170,7 +83,6 @@ describe("App", () => {
       await screen.findByText("Initial Administrator"),
     ).toBeInTheDocument();
     await browser.click(screen.getByRole("button", { name: "Sign out" }));
-
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
@@ -190,9 +102,7 @@ describe("App", () => {
       await screen.findByText("Initial Administrator"),
     ).toBeInTheDocument();
     expect(sessionRequests).toBe(1);
-
     fireEvent.focus(window);
-
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
@@ -222,7 +132,6 @@ describe("App", () => {
     await browser.click(
       screen.getByRole("button", { name: "Change password" }),
     );
-
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
@@ -255,7 +164,6 @@ describe("App", () => {
     await browser.click(
       screen.getByRole("button", { name: "Change password" }),
     );
-
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
@@ -288,7 +196,6 @@ describe("App", () => {
         );
       }
       await browser.click(screen.getByRole("button", { name: action }));
-
       expect(
         await screen.findByRole("heading", { name: "Sign in" }),
       ).toBeInTheDocument();
@@ -317,7 +224,6 @@ describe("App", () => {
     await browser.click(
       screen.getByRole("button", { name: "Change password" }),
     );
-
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The secure request could not be verified.",
     );
@@ -339,7 +245,6 @@ describe("App", () => {
     });
 
     render(<App />);
-
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Authentication service unavailable",
     );
