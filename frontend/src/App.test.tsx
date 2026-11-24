@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -168,6 +174,32 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeInTheDocument();
+  });
+
+  it("revalidates an expired session when the user returns to the window", async () => {
+    let sessionRequests = 0;
+    mockApi((url) => {
+      if (url === "/api/v1/auth/me") {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? json(user) : json({}, 401);
+      }
+    });
+
+    render(<App />);
+    expect(
+      await screen.findByText("Initial Administrator"),
+    ).toBeInTheDocument();
+    expect(sessionRequests).toBe(1);
+
+    fireEvent.focus(window);
+
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session has expired.",
+    );
+    expect(sessionRequests).toBe(2);
   });
 
   it("returns to sign-in after a password change revokes the session", async () => {

@@ -19,10 +19,25 @@ Start PostgreSQL:
 docker compose up -d postgres
 ```
 
-Before the first sign-in, provision the initial administrator. With a secure console, the task prompts for the login identifier, display name, password, and password confirmation. In a non-interactive environment, supply `STOCKBOOK_ADMIN_LOGIN`, `STOCKBOOK_ADMIN_DISPLAY_NAME`, and `STOCKBOOK_ADMIN_PASSWORD` as process environment variables. The task accepts the credentials only when no users exist:
+Before the first sign-in, provision the initial administrator. Supply `STOCKBOOK_ADMIN_LOGIN`, `STOCKBOOK_ADMIN_DISPLAY_NAME`, and `STOCKBOOK_ADMIN_PASSWORD` as process environment variables. The task accepts the credentials only when no users exist:
 
 ```bash
 ./gradlew :backend:provisionAdmin
+```
+
+Gradle does not expose a secure Java console to the task on Windows PowerShell. Use a hidden PowerShell prompt and clear the process environment afterward:
+
+```powershell
+$env:STOCKBOOK_ADMIN_LOGIN = Read-Host "Login identifier"
+$env:STOCKBOOK_ADMIN_DISPLAY_NAME = Read-Host "Display name"
+$adminPassword = Read-Host "Password" -AsSecureString
+try {
+  $env:STOCKBOOK_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new("", $adminPassword).Password
+  .\gradlew.bat :backend:provisionAdmin
+} finally {
+  Remove-Item Env:STOCKBOOK_ADMIN_LOGIN, Env:STOCKBOOK_ADMIN_DISPLAY_NAME, Env:STOCKBOOK_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+  $adminPassword.Dispose()
+}
 ```
 
 Start the backend from the repository root:

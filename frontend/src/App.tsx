@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type ConnectivityState =
   | { kind: "loading" }
@@ -69,6 +69,7 @@ export default function App() {
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState<string>();
+  const sessionRevalidationInFlight = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -142,6 +143,57 @@ export default function App() {
     })();
     return () => controller.abort();
   }, [authAttempt]);
+
+  useEffect(() => {
+    if (auth.kind !== "authenticated") return;
+
+    const controller = new AbortController();
+    async function revalidateSession() {
+      if (sessionRevalidationInFlight.current) return;
+      sessionRevalidationInFlight.current = true;
+      try {
+        const response = await fetch("/api/v1/auth/me", {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (response.status === 401) {
+          setAuth({ kind: "anonymous" });
+          setAuthMessage("Your session has expired. Please sign in again.");
+          return;
+        }
+        const body = await readJson(response);
+        if (response.ok && isUser(body)) {
+          setAuth({ kind: "authenticated", user: body });
+        } else {
+          setAuth({
+            kind: "unavailable",
+            message: "Authentication service unavailable",
+          });
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        setAuth({
+          kind: "unavailable",
+          message: "Authentication service unavailable",
+        });
+      } finally {
+        sessionRevalidationInFlight.current = false;
+      }
+    }
+
+    function revalidateWhenActive() {
+      if (document.visibilityState === "visible") void revalidateSession();
+    }
+
+    window.addEventListener("focus", revalidateWhenActive);
+    document.addEventListener("visibilitychange", revalidateWhenActive);
+    return () => {
+      window.removeEventListener("focus", revalidateWhenActive);
+      document.removeEventListener("visibilitychange", revalidateWhenActive);
+      controller.abort();
+    };
+  }, [auth.kind]);
 
   function retryConnection() {
     setConnectivity({ kind: "loading" });

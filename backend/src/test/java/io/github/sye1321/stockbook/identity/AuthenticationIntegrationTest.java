@@ -140,6 +140,7 @@ class AuthenticationIntegrationTest {
                 .andExpect(jsonPath("$.displayName").value("Initial Administrator"))
                 .andReturn();
         Cookie authenticatedCookie = requireSessionCookie(login, anonymous.cookie());
+        assertThat(authenticatedCookie.getValue()).isNotEqualTo(anonymous.cookie().getValue());
 
         mockMvc.perform(get("/api/v1/auth/me").cookie(authenticatedCookie))
                 .andExpect(status().isOk())
@@ -258,6 +259,27 @@ class AuthenticationIntegrationTest {
     }
 
     @Test
+    void ipAttemptLimitIsIndependentAndRecoversAfterTheFifteenMinuteWindow() throws Exception {
+        provisionUser();
+        BrowserSession client = csrf(null);
+        String remoteAddress = "203.0.113.40";
+
+        for (int attempt = 1; attempt < 30; attempt++) {
+            performLoginFromAddress(
+                            client, "unknown" + attempt + "@example.com", "wrong password value", remoteAddress)
+                    .andExpect(status().isUnauthorized());
+        }
+        performLoginFromAddress(client, "unknown30@example.com", "wrong password value", remoteAddress)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("too_many_attempts"));
+        performLoginFromAddress(client, LOGIN, PASSWORD, remoteAddress)
+                .andExpect(status().isTooManyRequests());
+
+        clock.advance(Duration.ofMinutes(16));
+        performLoginFromAddress(client, LOGIN, PASSWORD, remoteAddress).andExpect(status().isOk());
+    }
+
+    @Test
     void idleTimeoutAndAbsoluteAuthenticatedLifetimeAreIndependent() throws Exception {
         provisionUser();
         BrowserSession idleSession = loginAndRefreshCsrf();
@@ -305,6 +327,19 @@ class AuthenticationIntegrationTest {
                 .header(session.headerName(), session.token())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(loginJson(loginIdentifier, password)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions performLoginFromAddress(
+            BrowserSession session, String loginIdentifier, String password, String remoteAddress) throws Exception {
+        return mockMvc.perform(post("/api/v1/auth/login")
+                .cookie(session.cookie())
+                .header(session.headerName(), session.token())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(loginJson(loginIdentifier, password))
+                .with(request -> {
+                    request.setRemoteAddr(remoteAddress);
+                    return request;
+                }));
     }
 
     private BrowserSession csrf(Cookie cookie) throws Exception {
