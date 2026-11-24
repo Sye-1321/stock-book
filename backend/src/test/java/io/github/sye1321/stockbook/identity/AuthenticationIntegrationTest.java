@@ -352,8 +352,8 @@ class AuthenticationIntegrationTest {
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsByteArray());
         return new BrowserSession(
                 requireSessionCookie(result, cookie),
-                json.get("headerName").asText(),
-                json.get("token").asText());
+                json.get("headerName").stringValue(),
+                json.get("token").stringValue());
     }
 
     private String loginJson(String loginIdentifier, String password) throws Exception {

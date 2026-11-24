@@ -40,6 +40,10 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+tasks.withType<JavaCompile> {
+    options.compilerArgs.add("-Xlint:deprecation")
+}
+
 tasks.register<JavaExec>("provisionAdmin") {
     group = "application"
     description = "Interactively provisions the first Stock Book administrator"

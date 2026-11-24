@@ -53,7 +53,7 @@ class HealthEndpointDatabaseOutageIntegrationTest {
 
         MvcResult loginResult = mockMvc.perform(post("/api/v1/auth/login")
                         .cookie(anonymousCookie)
-                        .header(csrf.get("headerName").asText(), csrf.get("token").asText())
+                        .header(csrf.get("headerName").stringValue(), csrf.get("token").stringValue())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(new Login(LOGIN, PASSWORD))))
                 .andExpect(status().isOk())
