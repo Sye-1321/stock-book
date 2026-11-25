@@ -40,6 +40,9 @@ public class InventoryService {
             String reason,
             UUID postedBy) {
         validateRequired(requestId, warehouseId, productId, type, enteredQuantity, enteredUnitId, postedBy);
+        if (type == MovementType.TRANSFER_IN || type == MovementType.TRANSFER_OUT) {
+            throw new InvalidInventoryException("Transfer movements must be posted through the transfers endpoint");
+        }
         String normalizedReason = normalizeReason(type, reason);
 
         inventoryRepository.lockRequest(requestId);
@@ -93,6 +96,7 @@ public class InventoryService {
         inventoryRepository.insertMovement(
                 movementId,
                 requestId,
+                null,
                 warehouseId,
                 productId,
                 type,
@@ -108,6 +112,133 @@ public class InventoryService {
                 inventoryRepository
                         .findMovementByRequestId(requestId)
                         .orElseThrow(() -> new IllegalStateException("Posted movement was not found")),
+                true);
+    }
+
+    @Transactional
+    public TransferResult transfer(
+            UUID requestId,
+            UUID sourceWarehouseId,
+            UUID destinationWarehouseId,
+            UUID productId,
+            BigDecimal enteredQuantity,
+            UUID enteredUnitId,
+            String reason,
+            UUID postedBy) {
+        validateTransferRequired(
+                requestId,
+                sourceWarehouseId,
+                destinationWarehouseId,
+                productId,
+                enteredQuantity,
+                enteredUnitId,
+                postedBy);
+        String normalizedReason = normalizeTransferReason(reason);
+
+        inventoryRepository.lockRequest(requestId);
+        InventoryTransfer existing = inventoryRepository.findTransferByRequestId(requestId).orElse(null);
+        if (existing != null) {
+            if (sameTransferRequest(
+                    existing,
+                    sourceWarehouseId,
+                    destinationWarehouseId,
+                    productId,
+                    enteredQuantity,
+                    enteredUnitId,
+                    normalizedReason)) {
+                return new TransferResult(existing, false);
+            }
+            throw new InventoryConflictException("Request ID has already been used with different transfer data");
+        }
+
+        UUID firstWarehouseId = sourceWarehouseId.compareTo(destinationWarehouseId) < 0
+                ? sourceWarehouseId
+                : destinationWarehouseId;
+        UUID secondWarehouseId = firstWarehouseId.equals(sourceWarehouseId)
+                ? destinationWarehouseId
+                : sourceWarehouseId;
+        InventoryRepository.WarehouseState first = requireActiveWarehouse(firstWarehouseId);
+        InventoryRepository.WarehouseState second = requireActiveWarehouse(secondWarehouseId);
+        if (!first.active() || !first.locationActive() || !second.active() || !second.locationActive()) {
+            throw new InvalidInventoryException("Both warehouses and their locations must be active");
+        }
+
+        Product product = productRepository
+                .findById(productId)
+                .orElseThrow(() -> new InvalidInventoryException("Product was not found"));
+        if (!product.active()) throw new InvalidInventoryException("Product must be active");
+        BigDecimal factor = conversionFactor(product, enteredUnitId);
+        BigDecimal baseQuantity = enteredQuantity.multiply(factor);
+
+        BigDecimal firstBalance = inventoryRepository
+                .lockBalance(firstWarehouseId, productId)
+                .orElse(BigDecimal.ZERO);
+        BigDecimal secondBalance = inventoryRepository
+                .lockBalance(secondWarehouseId, productId)
+                .orElse(BigDecimal.ZERO);
+        BigDecimal sourceBalance = sourceWarehouseId.equals(firstWarehouseId)
+                ? firstBalance
+                : secondBalance;
+        BigDecimal destinationBalance = destinationWarehouseId.equals(firstWarehouseId)
+                ? firstBalance
+                : secondBalance;
+        BigDecimal newSourceBalance = sourceBalance.subtract(baseQuantity);
+        if (newSourceBalance.signum() < 0) {
+            throw new InventoryConflictException("Insufficient stock for this transfer");
+        }
+        BigDecimal newDestinationBalance = destinationBalance.add(baseQuantity);
+
+        Instant postedAt = clock.instant();
+        UUID transferId = UUID.randomUUID();
+        inventoryRepository.insertTransfer(
+                transferId,
+                requestId,
+                sourceWarehouseId,
+                destinationWarehouseId,
+                productId,
+                enteredQuantity,
+                enteredUnitId,
+                factor,
+                baseQuantity,
+                normalizedReason,
+                postedBy,
+                postedAt);
+        inventoryRepository.insertMovement(
+                UUID.randomUUID(),
+                null,
+                transferId,
+                sourceWarehouseId,
+                productId,
+                MovementType.TRANSFER_OUT,
+                enteredQuantity,
+                enteredUnitId,
+                factor,
+                baseQuantity.negate(),
+                normalizedReason,
+                postedBy,
+                postedAt);
+        inventoryRepository.insertMovement(
+                UUID.randomUUID(),
+                null,
+                transferId,
+                destinationWarehouseId,
+                productId,
+                MovementType.TRANSFER_IN,
+                enteredQuantity,
+                enteredUnitId,
+                factor,
+                baseQuantity,
+                normalizedReason,
+                postedBy,
+                postedAt);
+        inventoryRepository.upsertBalance(
+                sourceWarehouseId, productId, newSourceBalance, postedAt);
+        inventoryRepository.upsertBalance(
+                destinationWarehouseId, productId, newDestinationBalance, postedAt);
+        return new TransferResult(
+                inventoryRepository
+                        .findTransferByRequestId(requestId)
+                        .orElseThrow(() -> new IllegalStateException("Posted transfer was not found")),
                 true);
     }
 
@@ -136,6 +267,12 @@ public class InventoryService {
                 .map(ProductUnitConversion::conversionFactor)
                 .orElseThrow(() -> new InvalidInventoryException(
                         "Entered unit must be the product's base unit or a configured conversion"));
+    }
+
+    private InventoryRepository.WarehouseState requireActiveWarehouse(UUID warehouseId) {
+        return inventoryRepository
+                .lockWarehouse(warehouseId)
+                .orElseThrow(() -> new InvalidInventoryException("Warehouse was not found"));
     }
 
     private static void validateRequired(
@@ -170,6 +307,38 @@ public class InventoryService {
         return normalized == null || normalized.isEmpty() ? null : normalized;
     }
 
+    private static void validateTransferRequired(
+            UUID requestId,
+            UUID sourceWarehouseId,
+            UUID destinationWarehouseId,
+            UUID productId,
+            BigDecimal enteredQuantity,
+            UUID enteredUnitId,
+            UUID postedBy) {
+        if (requestId == null
+                || sourceWarehouseId == null
+                || destinationWarehouseId == null
+                || productId == null
+                || enteredUnitId == null
+                || postedBy == null) {
+            throw new InvalidInventoryException("All transfer identifiers are required");
+        }
+        if (sourceWarehouseId.equals(destinationWarehouseId)) {
+            throw new InvalidInventoryException("Source and destination warehouses must be different");
+        }
+        if (enteredQuantity == null || enteredQuantity.signum() <= 0) {
+            throw new InvalidInventoryException("Quantity must be greater than zero");
+        }
+    }
+
+    private static String normalizeTransferReason(String reason) {
+        String normalized = reason == null ? "" : reason.trim();
+        if (normalized.isEmpty() || normalized.length() > 500) {
+            throw new InvalidInventoryException("Reason is required and must not exceed 500 characters");
+        }
+        return normalized;
+    }
+
     private static boolean sameRequest(
             InventoryMovement existing,
             UUID warehouseId,
@@ -186,7 +355,25 @@ public class InventoryService {
                 && Objects.equals(existing.reason(), reason);
     }
 
+    private static boolean sameTransferRequest(
+            InventoryTransfer existing,
+            UUID sourceWarehouseId,
+            UUID destinationWarehouseId,
+            UUID productId,
+            BigDecimal enteredQuantity,
+            UUID enteredUnitId,
+            String reason) {
+        return existing.sourceWarehouseId().equals(sourceWarehouseId)
+                && existing.destinationWarehouseId().equals(destinationWarehouseId)
+                && existing.productId().equals(productId)
+                && existing.enteredQuantity().compareTo(enteredQuantity) == 0
+                && existing.enteredUnitId().equals(enteredUnitId)
+                && existing.reason().equals(reason);
+    }
+
     public record PostResult(InventoryMovement movement, boolean created) {}
+
+    public record TransferResult(InventoryTransfer transfer, boolean created) {}
 
     public static class InvalidInventoryException extends RuntimeException {
         public InvalidInventoryException(String message) {

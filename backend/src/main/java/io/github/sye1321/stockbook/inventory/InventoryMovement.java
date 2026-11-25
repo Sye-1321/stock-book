@@ -7,6 +7,7 @@ import java.util.UUID;
 public record InventoryMovement(
         UUID id,
         UUID requestId,
+        UUID transferId,
         UUID warehouseId,
         String warehouseCode,
         UUID productId,

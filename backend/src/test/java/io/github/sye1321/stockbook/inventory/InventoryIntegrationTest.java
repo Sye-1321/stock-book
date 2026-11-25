@@ -72,6 +72,7 @@ class InventoryIntegrationTest {
     @BeforeEach
     void resetDatabase() {
         jdbcClient.sql("delete from inventory_movement").update();
+        jdbcClient.sql("delete from inventory_transfer").update();
         jdbcClient.sql("delete from stock_balance").update();
         jdbcClient.sql("delete from product_unit_conversion").update();
         jdbcClient.sql("delete from product").update();

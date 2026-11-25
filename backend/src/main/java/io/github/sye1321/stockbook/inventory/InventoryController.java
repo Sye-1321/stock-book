@@ -47,6 +47,25 @@ public class InventoryController {
                 .body(response);
     }
 
+    @PostMapping("/transfers")
+    public ResponseEntity<TransferResponse> transfer(
+            @RequestBody PostTransferRequest request,
+            @AuthenticationPrincipal StockBookUserDetails user) {
+        InventoryService.TransferResult result = service.transfer(
+                request == null ? null : request.requestId(),
+                request == null ? null : request.sourceWarehouseId(),
+                request == null ? null : request.destinationWarehouseId(),
+                request == null ? null : request.productId(),
+                request == null ? null : request.quantity(),
+                request == null ? null : request.unitId(),
+                request == null ? null : request.reason(),
+                user.id());
+        TransferResponse response = TransferResponse.from(result.transfer());
+        if (!result.created()) return ResponseEntity.ok(response);
+        return ResponseEntity.created(URI.create("/api/v1/inventory/transfers/" + response.id()))
+                .body(response);
+    }
+
     @GetMapping("/balances")
     public List<BalanceResponse> balances(
             @RequestParam(required = false) UUID warehouseId,
@@ -88,9 +107,19 @@ public class InventoryController {
             UUID unitId,
             String reason) {}
 
+    public record PostTransferRequest(
+            UUID requestId,
+            UUID sourceWarehouseId,
+            UUID destinationWarehouseId,
+            UUID productId,
+            BigDecimal quantity,
+            UUID unitId,
+            String reason) {}
+
     public record MovementResponse(
             UUID id,
             UUID requestId,
+            UUID transferId,
             UUID warehouseId,
             String warehouseCode,
             UUID productId,
@@ -109,6 +138,7 @@ public class InventoryController {
             return new MovementResponse(
                     movement.id(),
                     movement.requestId(),
+                    movement.transferId(),
                     movement.warehouseId(),
                     movement.warehouseCode(),
                     movement.productId(),
@@ -123,6 +153,46 @@ public class InventoryController {
                     movement.postedBy(),
                     movement.postedByName(),
                     movement.postedAt());
+        }
+    }
+
+    public record TransferResponse(
+            UUID id,
+            UUID requestId,
+            UUID sourceWarehouseId,
+            String sourceWarehouseCode,
+            UUID destinationWarehouseId,
+            String destinationWarehouseCode,
+            UUID productId,
+            String productSku,
+            String enteredQuantity,
+            UUID enteredUnitId,
+            String enteredUnitCode,
+            String conversionFactor,
+            String baseQuantity,
+            String reason,
+            UUID postedBy,
+            String postedByName,
+            java.time.Instant postedAt) {
+        static TransferResponse from(InventoryTransfer transfer) {
+            return new TransferResponse(
+                    transfer.id(),
+                    transfer.requestId(),
+                    transfer.sourceWarehouseId(),
+                    transfer.sourceWarehouseCode(),
+                    transfer.destinationWarehouseId(),
+                    transfer.destinationWarehouseCode(),
+                    transfer.productId(),
+                    transfer.productSku(),
+                    transfer.enteredQuantity().toPlainString(),
+                    transfer.enteredUnitId(),
+                    transfer.enteredUnitCode(),
+                    transfer.conversionFactor().toPlainString(),
+                    transfer.baseQuantity().toPlainString(),
+                    transfer.reason(),
+                    transfer.postedBy(),
+                    transfer.postedByName(),
+                    transfer.postedAt());
         }
     }
 

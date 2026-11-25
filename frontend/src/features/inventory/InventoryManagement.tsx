@@ -30,18 +30,44 @@ type Balance = {
 
 type Movement = {
   id: string;
-  requestId: string;
+  requestId: string | null;
+  transferId: string | null;
   warehouseId: string;
   warehouseCode: string;
   productId: string;
   productSku: string;
-  type: "OPENING" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
+  type:
+    | "OPENING"
+    | "ADJUSTMENT_IN"
+    | "ADJUSTMENT_OUT"
+    | "TRANSFER_IN"
+    | "TRANSFER_OUT";
   enteredQuantity: string;
   enteredUnitId: string;
   enteredUnitCode: string;
   conversionFactor: string;
   baseQuantity: string;
   reason: string | null;
+  postedBy: string;
+  postedByName: string;
+  postedAt: string;
+};
+
+type Transfer = {
+  id: string;
+  requestId: string;
+  sourceWarehouseId: string;
+  sourceWarehouseCode: string;
+  destinationWarehouseId: string;
+  destinationWarehouseCode: string;
+  productId: string;
+  productSku: string;
+  enteredQuantity: string;
+  enteredUnitId: string;
+  enteredUnitCode: string;
+  conversionFactor: string;
+  baseQuantity: string;
+  reason: string;
   postedBy: string;
   postedByName: string;
   postedAt: string;
@@ -89,20 +115,46 @@ function isMovement(value: unknown): value is Movement {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.requestId === "string" &&
+    (typeof value.requestId === "string" || value.requestId === null) &&
+    (typeof value.transferId === "string" || value.transferId === null) &&
     typeof value.warehouseId === "string" &&
     typeof value.warehouseCode === "string" &&
     typeof value.productId === "string" &&
     typeof value.productSku === "string" &&
     (value.type === "OPENING" ||
       value.type === "ADJUSTMENT_IN" ||
-      value.type === "ADJUSTMENT_OUT") &&
+      value.type === "ADJUSTMENT_OUT" ||
+      value.type === "TRANSFER_IN" ||
+      value.type === "TRANSFER_OUT") &&
     typeof value.enteredQuantity === "string" &&
     typeof value.enteredUnitId === "string" &&
     typeof value.enteredUnitCode === "string" &&
     typeof value.conversionFactor === "string" &&
     typeof value.baseQuantity === "string" &&
     (typeof value.reason === "string" || value.reason === null) &&
+    typeof value.postedBy === "string" &&
+    typeof value.postedByName === "string" &&
+    typeof value.postedAt === "string"
+  );
+}
+
+function isTransfer(value: unknown): value is Transfer {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.requestId === "string" &&
+    typeof value.sourceWarehouseId === "string" &&
+    typeof value.sourceWarehouseCode === "string" &&
+    typeof value.destinationWarehouseId === "string" &&
+    typeof value.destinationWarehouseCode === "string" &&
+    typeof value.productId === "string" &&
+    typeof value.productSku === "string" &&
+    typeof value.enteredQuantity === "string" &&
+    typeof value.enteredUnitId === "string" &&
+    typeof value.enteredUnitCode === "string" &&
+    typeof value.conversionFactor === "string" &&
+    typeof value.baseQuantity === "string" &&
+    typeof value.reason === "string" &&
     typeof value.postedBy === "string" &&
     typeof value.postedByName === "string" &&
     typeof value.postedAt === "string"
@@ -136,11 +188,24 @@ export default function InventoryManagement({
   const [selectedProductId, setSelectedProductId] = useState("");
   const [conversions, setConversions] = useState<ProductConversion[]>([]);
   const [conversionsLoading, setConversionsLoading] = useState(false);
+  const [transferSourceWarehouseId, setTransferSourceWarehouseId] =
+    useState("");
+  const [transferProductId, setTransferProductId] = useState("");
+  const [transferConversions, setTransferConversions] = useState<
+    ProductConversion[]
+  >([]);
+  const [transferConversionsLoading, setTransferConversionsLoading] =
+    useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
   const [posting, setPosting] = useState(false);
   const [postMessage, setPostMessage] = useState<string>();
+  const [transferring, setTransferring] = useState(false);
+  const [transferMessage, setTransferMessage] = useState<string>();
   const pendingRequest = useRef<
+    { signature: string; requestId: string } | undefined
+  >(undefined);
+  const pendingTransferRequest = useRef<
     { signature: string; requestId: string } | undefined
   >(undefined);
 
@@ -230,6 +295,42 @@ export default function InventoryManagement({
     return () => controller.abort();
   }, [onSessionExpired, selectedProductId]);
 
+  useEffect(() => {
+    if (!transferProductId) {
+      setTransferConversions([]);
+      return;
+    }
+    const controller = new AbortController();
+    setTransferConversionsLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/v1/products/${transferProductId}/conversions`,
+          {
+            headers: { Accept: "application/json" },
+            signal: controller.signal,
+          },
+        );
+        if (response.status === 401) {
+          onSessionExpired();
+          return;
+        }
+        const body = await readJson(response);
+        if (response.ok && Array.isArray(body) && body.every(isConversion)) {
+          setTransferConversions(body);
+        } else {
+          setTransferMessage("Unable to load transfer product units.");
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError"))
+          setTransferMessage("Product unit service unavailable.");
+      } finally {
+        setTransferConversionsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [onSessionExpired, transferProductId]);
+
   async function postMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -294,6 +395,80 @@ export default function InventoryManagement({
     }
   }
 
+  async function postTransfer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const sourceWarehouseId = String(data.get("transferSourceWarehouseId"));
+    const destinationWarehouseId = String(
+      data.get("transferDestinationWarehouseId"),
+    );
+    const quantity = String(data.get("transferQuantity") ?? "").trim();
+    const reason = String(data.get("transferReason") ?? "").trim();
+    if (sourceWarehouseId === destinationWarehouseId) {
+      setTransferMessage(
+        "Source and destination warehouses must be different.",
+      );
+      return;
+    }
+    if (!isPositiveDecimal(quantity)) {
+      setTransferMessage("Transfer quantity must be greater than zero.");
+      return;
+    }
+    if (!reason) {
+      setTransferMessage("A reason is required for transfers.");
+      return;
+    }
+    const payload = {
+      sourceWarehouseId,
+      destinationWarehouseId,
+      productId: String(data.get("transferProductId")),
+      quantity,
+      unitId: String(data.get("transferUnitId")),
+      reason,
+    };
+    const signature = JSON.stringify(payload);
+    const requestId =
+      pendingTransferRequest.current?.signature === signature
+        ? pendingTransferRequest.current.requestId
+        : crypto.randomUUID();
+    pendingTransferRequest.current = { signature, requestId };
+    setTransferring(true);
+    setTransferMessage(undefined);
+    try {
+      const csrf = await fetchCsrf();
+      const response = await fetch("/api/v1/inventory/transfers", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          [csrf.headerName]: csrf.token,
+        },
+        body: JSON.stringify({ requestId, ...payload }),
+      });
+      const body = await readJson(response);
+      if (response.status === 401) {
+        onSessionExpired();
+      } else if (response.ok && isTransfer(body)) {
+        pendingTransferRequest.current = undefined;
+        form.reset();
+        setTransferSourceWarehouseId("");
+        setTransferProductId("");
+        setTransferMessage("Transfer posted.");
+        await loadInventory();
+      } else {
+        const error = isRecord(body) ? (body as ApiError) : undefined;
+        setTransferMessage(error?.message ?? "Unable to post transfer.");
+      }
+    } catch (error) {
+      if (error instanceof CsrfRequestError && error.status === 401)
+        onSessionExpired();
+      else setTransferMessage("Inventory service unavailable.");
+    } finally {
+      setTransferring(false);
+    }
+  }
+
   const selectedProduct = products.find(
     (product) => product.id === selectedProductId,
   );
@@ -305,6 +480,23 @@ export default function InventoryManagement({
           factor: "1",
         },
         ...conversions.map((conversion) => ({
+          id: conversion.alternateUnitId,
+          code: conversion.alternateUnitCode,
+          factor: conversion.conversionFactor,
+        })),
+      ]
+    : [];
+  const selectedTransferProduct = products.find(
+    (product) => product.id === transferProductId,
+  );
+  const transferUnitOptions = selectedTransferProduct
+    ? [
+        {
+          id: selectedTransferProduct.baseUnitId,
+          code: selectedTransferProduct.baseUnitCode,
+          factor: "1",
+        },
+        ...transferConversions.map((conversion) => ({
           id: conversion.alternateUnitId,
           code: conversion.alternateUnitCode,
           factor: conversion.conversionFactor,
@@ -392,9 +584,123 @@ export default function InventoryManagement({
           </button>
         </form>
       )}
+      {isAdmin && (
+        <form className="management-form" onSubmit={postTransfer}>
+          <h3>Transfer stock</h3>
+          <label>
+            Transfer source warehouse
+            <select
+              name="transferSourceWarehouseId"
+              required
+              value={transferSourceWarehouseId}
+              onChange={(event) =>
+                setTransferSourceWarehouseId(event.target.value)
+              }
+            >
+              <option value="" disabled>
+                Select a source warehouse
+              </option>
+              {warehouses
+                .filter((warehouse) => warehouse.active)
+                .map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.code} — {warehouse.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Transfer destination warehouse
+            <select
+              name="transferDestinationWarehouseId"
+              required
+              defaultValue=""
+            >
+              <option value="" disabled>
+                Select a destination warehouse
+              </option>
+              {warehouses
+                .filter(
+                  (warehouse) =>
+                    warehouse.active &&
+                    warehouse.id !== transferSourceWarehouseId,
+                )
+                .map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.code} — {warehouse.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Transfer product
+            <select
+              name="transferProductId"
+              required
+              value={transferProductId}
+              onChange={(event) => setTransferProductId(event.target.value)}
+            >
+              <option value="" disabled>
+                Select a product
+              </option>
+              {products
+                .filter((product) => product.active)
+                .map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.sku} — {product.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Transfer unit
+            <select
+              name="transferUnitId"
+              required
+              defaultValue=""
+              disabled={!selectedTransferProduct || transferConversionsLoading}
+            >
+              <option value="" disabled>
+                {transferConversionsLoading
+                  ? "Loading transfer units…"
+                  : "Select a unit"}
+              </option>
+              {transferUnitOptions.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.code} (factor {unit.factor})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Transfer quantity
+            <input
+              name="transferQuantity"
+              type="text"
+              inputMode="decimal"
+              required
+            />
+          </label>
+          <label>
+            Transfer reason
+            <input name="transferReason" maxLength={500} required />
+          </label>
+          <button
+            type="submit"
+            disabled={transferring || transferConversionsLoading}
+          >
+            Transfer stock
+          </button>
+        </form>
+      )}
       {postMessage && (
         <p className="form-message" role="status">
           {postMessage}
+        </p>
+      )}
+      {transferMessage && (
+        <p className="form-message" role="status">
+          {transferMessage}
         </p>
       )}
       {loading && <p>Loading inventory…</p>}
@@ -439,6 +745,9 @@ export default function InventoryManagement({
                   <p>
                     {movement.productSku} at {movement.warehouseCode}
                   </p>
+                  {movement.transferId && (
+                    <p>Linked transfer: {movement.transferId}</p>
+                  )}
                   <p>
                     {movement.enteredQuantity} {movement.enteredUnitCode} ={" "}
                     {movement.baseQuantity} base units
