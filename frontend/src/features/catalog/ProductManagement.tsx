@@ -31,6 +31,11 @@ function conversionKey(productId: string, unitId: string) {
   return `${productId}:${unitId}`;
 }
 
+function isPositiveDecimal(value: string) {
+  const decimal = value.trim();
+  return /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(decimal) && /[1-9]/.test(decimal);
+}
+
 export default function ProductManagement({
   isAdmin,
   unitsRevision,
@@ -46,6 +51,15 @@ export default function ProductManagement({
   >({});
   const [conversionDrafts, setConversionDrafts] = useState<
     Record<string, string>
+  >({});
+  const [expandedProducts, setExpandedProducts] = useState<
+    Record<string, boolean>
+  >({});
+  const [conversionLoading, setConversionLoading] = useState<
+    Record<string, boolean>
+  >({});
+  const [conversionErrors, setConversionErrors] = useState<
+    Record<string, string | undefined>
   >({});
   const [loading, setLoading] = useState(true);
   const [loadSucceeded, setLoadSucceeded] = useState(false);
@@ -96,41 +110,8 @@ export default function ProductManagement({
           setMessage("Unable to load products.");
           return;
         }
-        const conversionResponses = await Promise.all(
-          productBody.map((product) =>
-            fetch(`/api/v1/products/${product.id}/conversions`, {
-              headers: { Accept: "application/json" },
-              signal: controller.signal,
-            }),
-          ),
-        );
-        if (conversionResponses.some((response) => response.status === 401)) {
-          onSessionExpired();
-          return;
-        }
-        const conversionBodies = await Promise.all(
-          conversionResponses.map(readJson),
-        );
-        if (
-          conversionResponses.some((response) => !response.ok) ||
-          conversionBodies.some(
-            (body) => !Array.isArray(body) || !body.every(isConversion),
-          )
-        ) {
-          setMessage("Unable to load product conversions.");
-          return;
-        }
-        const conversionLists = conversionBodies as ProductConversion[][];
         setProducts(productBody);
         setUnits(unitBody);
-        setConversions(
-          Object.fromEntries(
-            productBody.map((product, index) => [
-              product.id,
-              conversionLists[index],
-            ]),
-          ),
-        );
         setLoadSucceeded(true);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
@@ -142,6 +123,58 @@ export default function ProductManagement({
     })();
     return () => controller.abort();
   }, [onSessionExpired, unitsRevision]);
+
+  async function loadConversions(productId: string, retry = false) {
+    if (!retry && conversions[productId] !== undefined) return;
+    setConversionLoading((current) => ({ ...current, [productId]: true }));
+    setConversionErrors((current) => ({
+      ...current,
+      [productId]: undefined,
+    }));
+    try {
+      const response = await fetch(
+        `/api/v1/products/${productId}/conversions`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (response.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      const body = await readJson(response);
+      if (!response.ok || !Array.isArray(body) || !body.every(isConversion)) {
+        setConversionErrors((current) => ({
+          ...current,
+          [productId]: "Unable to load conversions.",
+        }));
+        return;
+      }
+      setConversions((current) => ({ ...current, [productId]: body }));
+    } catch {
+      setConversionErrors((current) => ({
+        ...current,
+        [productId]: "Conversion service unavailable.",
+      }));
+    } finally {
+      setConversionLoading((current) => ({
+        ...current,
+        [productId]: false,
+      }));
+    }
+  }
+
+  function toggleProductDetails(productId: string) {
+    const expanding = !expandedProducts[productId];
+    setExpandedProducts((current) => ({
+      ...current,
+      [productId]: expanding,
+    }));
+    if (
+      expanding &&
+      conversions[productId] === undefined &&
+      !conversionLoading[productId]
+    )
+      void loadConversions(productId);
+  }
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -229,11 +262,16 @@ export default function ProductManagement({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const conversionFactor = String(data.get("conversionFactor") ?? "").trim();
+    if (!isPositiveDecimal(conversionFactor)) {
+      setMessage("Conversion factor must be greater than zero.");
+      return;
+    }
     await submit(
       `/api/v1/products/${product.id}/conversions`,
       {
         alternateUnitId: data.get("alternateUnitId"),
-        conversionFactor: data.get("conversionFactor"),
+        conversionFactor,
       },
       (body) => {
         if (!isConversion(body)) return false;
@@ -257,6 +295,10 @@ export default function ProductManagement({
     conversion: ProductConversion,
     factor: string,
   ) {
+    if (!isPositiveDecimal(factor)) {
+      setMessage("Conversion factor must be greater than zero.");
+      return;
+    }
     const key = conversionKey(product.id, conversion.alternateUnitId);
     await submit(
       `/api/v1/products/${product.id}/conversions/${conversion.alternateUnitId}`,
@@ -355,6 +397,10 @@ export default function ProductManagement({
           const draft = productDrafts[product.id] ?? product;
           const modified = productModified(product, productDrafts[product.id]);
           const productConversions = conversions[product.id] ?? [];
+          const conversionsLoaded = conversions[product.id] !== undefined;
+          const detailsExpanded = expandedProducts[product.id] ?? false;
+          const conversionsAreLoading = conversionLoading[product.id] ?? false;
+          const conversionError = conversionErrors[product.id];
           const availableUnits = units.filter(
             (unit) =>
               unit.id !== product.baseUnitId &&
@@ -416,102 +462,141 @@ export default function ProductManagement({
                   <p>{product.active ? "Active" : "Inactive"}</p>
                 </>
               )}
-              <div className="conversion-list">
-                <h3>Conversions for {product.sku}</h3>
-                {productConversions.length === 0 && (
-                  <p>No alternate-unit conversions.</p>
-                )}
-                {productConversions.map((conversion) => {
-                  const key = conversionKey(
-                    product.id,
-                    conversion.alternateUnitId,
-                  );
-                  const factor =
-                    conversionDrafts[key] ?? conversion.conversionFactor;
-                  const conversionModified =
-                    factor !== conversion.conversionFactor;
-                  return isAdmin ? (
-                    <div
-                      className="conversion-item"
-                      key={conversion.alternateUnitId}
-                    >
-                      <label>
-                        {conversion.alternateUnitCode} factor
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={factor}
-                          onChange={(event) =>
-                            setConversionDrafts((current) => {
-                              const next = { ...current };
-                              if (
-                                event.target.value ===
-                                conversion.conversionFactor
-                              )
-                                delete next[key];
-                              else next[key] = event.target.value;
-                              return next;
-                            })
-                          }
-                        />
-                      </label>
-                      <p>
-                        1 {conversion.alternateUnitCode} = {factor}{" "}
-                        {product.baseUnitCode}
-                      </p>
-                      {conversionModified && <p>Unsaved changes</p>}
+              <button
+                type="button"
+                onClick={() => toggleProductDetails(product.id)}
+              >
+                {detailsExpanded ? "Hide" : "Show"} details for {product.sku}
+              </button>
+              {detailsExpanded && (
+                <div className="conversion-list">
+                  <h3>Conversions for {product.sku}</h3>
+                  {conversionsAreLoading && <p>Loading conversions…</p>}
+                  {conversionError && (
+                    <>
+                      <p role="alert">{conversionError}</p>
                       <button
                         type="button"
-                        disabled={busy || !conversionModified}
-                        onClick={() =>
-                          saveConversion(product, conversion, factor)
-                        }
+                        disabled={conversionsAreLoading}
+                        onClick={() => void loadConversions(product.id, true)}
                       >
-                        Save {conversion.alternateUnitCode} conversion
+                        Retry conversions for {product.sku}
                       </button>
-                    </div>
-                  ) : (
-                    <p key={conversion.alternateUnitId}>
-                      1 {conversion.alternateUnitCode} = {factor}{" "}
-                      {product.baseUnitCode}
-                    </p>
-                  );
-                })}
-                {isAdmin && availableUnits.length > 0 && (
-                  <form
-                    className="management-form conversion-form"
-                    onSubmit={(event) => createConversion(event, product)}
-                  >
-                    <label>
-                      Alternate unit for {product.sku}
-                      <select name="alternateUnitId" required defaultValue="">
-                        <option value="" disabled>
-                          Select a unit
-                        </option>
-                        {availableUnits.map((unit) => (
-                          <option key={unit.id} value={unit.id}>
-                            {unit.code} — {unit.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Conversion factor for {product.sku}
-                      <input
-                        name="conversionFactor"
-                        type="number"
-                        min="0"
-                        step="any"
-                        required
-                      />
-                    </label>
-                    <button type="submit" disabled={busy}>
-                      Add conversion for {product.sku}
-                    </button>
-                  </form>
-                )}
-              </div>
+                    </>
+                  )}
+                  {conversionsLoaded &&
+                    !conversionError &&
+                    productConversions.length === 0 && (
+                      <p>No alternate-unit conversions.</p>
+                    )}
+                  {conversionsLoaded &&
+                    !conversionError &&
+                    productConversions.map((conversion) => {
+                      const key = conversionKey(
+                        product.id,
+                        conversion.alternateUnitId,
+                      );
+                      const factor =
+                        conversionDrafts[key] ?? conversion.conversionFactor;
+                      const conversionModified =
+                        factor !== conversion.conversionFactor;
+                      const factorValid = isPositiveDecimal(factor);
+                      return isAdmin ? (
+                        <div
+                          className="conversion-item"
+                          key={conversion.alternateUnitId}
+                        >
+                          <label>
+                            {conversion.alternateUnitCode} factor
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              aria-invalid={!factorValid}
+                              value={factor}
+                              onChange={(event) =>
+                                setConversionDrafts((current) => {
+                                  const next = { ...current };
+                                  if (
+                                    event.target.value ===
+                                    conversion.conversionFactor
+                                  )
+                                    delete next[key];
+                                  else next[key] = event.target.value;
+                                  return next;
+                                })
+                              }
+                            />
+                          </label>
+                          <p>
+                            1 {conversion.alternateUnitCode} = {factor}{" "}
+                            {product.baseUnitCode}
+                          </p>
+                          {conversionModified && <p>Unsaved changes</p>}
+                          {conversionModified && !factorValid && (
+                            <p role="alert">
+                              Conversion factor must be greater than zero.
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            disabled={
+                              busy || !conversionModified || !factorValid
+                            }
+                            onClick={() =>
+                              saveConversion(product, conversion, factor)
+                            }
+                          >
+                            Save {conversion.alternateUnitCode} conversion
+                          </button>
+                        </div>
+                      ) : (
+                        <p key={conversion.alternateUnitId}>
+                          1 {conversion.alternateUnitCode} = {factor}{" "}
+                          {product.baseUnitCode}
+                        </p>
+                      );
+                    })}
+                  {isAdmin &&
+                    conversionsLoaded &&
+                    !conversionError &&
+                    availableUnits.length > 0 && (
+                      <form
+                        className="management-form conversion-form"
+                        onSubmit={(event) => createConversion(event, product)}
+                      >
+                        <label>
+                          Alternate unit for {product.sku}
+                          <select
+                            name="alternateUnitId"
+                            required
+                            defaultValue=""
+                          >
+                            <option value="" disabled>
+                              Select a unit
+                            </option>
+                            {availableUnits.map((unit) => (
+                              <option key={unit.id} value={unit.id}>
+                                {unit.code} — {unit.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Conversion factor for {product.sku}
+                          <input
+                            name="conversionFactor"
+                            type="text"
+                            inputMode="decimal"
+                            required
+                          />
+                        </label>
+                        <button type="submit" disabled={busy}>
+                          Add conversion for {product.sku}
+                        </button>
+                      </form>
+                    )}
+                </div>
+              )}
             </article>
           );
         })}

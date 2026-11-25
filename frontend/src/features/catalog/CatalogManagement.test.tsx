@@ -46,6 +46,7 @@ afterEach(() => {
 describe("catalog management", () => {
   it("lists and edits units, products and exact conversion factors", async () => {
     const browser = userEvent.setup();
+    const exactFactor = "12.5001000000000000000001";
     mockApi((url, init) => {
       if (url === "/api/v1/units" && !init?.method)
         return json([piece, carton, box]);
@@ -66,7 +67,10 @@ describe("catalog management", () => {
         url === `/api/v1/products/${product.id}/conversions/${carton.id}` &&
         init?.method === "PUT"
       ) {
-        return json({ ...conversion, conversionFactor: "12.5001" });
+        expect(JSON.parse(String(init.body))).toEqual({
+          conversionFactor: exactFactor,
+        });
+        return json({ ...conversion, conversionFactor: exactFactor });
       }
       if (
         url === `/api/v1/products/${product.id}/conversions` &&
@@ -87,7 +91,10 @@ describe("catalog management", () => {
 
     render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
     expect(await screen.findByDisplayValue("Bar Soap")).toBeInTheDocument();
-    expect(screen.getByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(await screen.findByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
 
     const unitName = screen.getByLabelText("Name for PIECE");
     await browser.clear(unitName);
@@ -104,12 +111,14 @@ describe("catalog management", () => {
 
     const factor = screen.getByLabelText("CARTON factor");
     await browser.clear(factor);
-    await browser.type(factor, "12.5001");
+    await browser.type(factor, exactFactor);
     await browser.click(
       screen.getByRole("button", { name: "Save CARTON conversion" }),
     );
     expect(await screen.findByText("Conversion updated.")).toBeInTheDocument();
-    expect(screen.getByText("1 CARTON = 12.5001 PIECE")).toBeInTheDocument();
+    expect(
+      screen.getByText(`1 CARTON = ${exactFactor} PIECE`),
+    ).toBeInTheDocument();
 
     await browser.selectOptions(
       screen.getByLabelText("Alternate unit for SOAP"),
@@ -127,6 +136,7 @@ describe("catalog management", () => {
   });
 
   it("shows read-only catalog listings to staff users", async () => {
+    const browser = userEvent.setup();
     mockApi((url, init) => {
       if (url === "/api/v1/units" && !init?.method)
         return json([piece, carton]);
@@ -140,13 +150,177 @@ describe("catalog management", () => {
     expect(
       within(products.parentElement!).getByText("Bar Soap"),
     ).toBeInTheDocument();
-    expect(screen.getByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(await screen.findByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Create product" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Create unit" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("creates units and products", async () => {
+    const browser = userEvent.setup();
+    const pallet = {
+      id: "55555555-5555-4555-8555-555555555555",
+      code: "PALLET",
+      name: "Pallets",
+    };
+    const createdProduct = {
+      ...product,
+      id: "66666666-6666-4666-8666-666666666666",
+      sku: "RICE",
+      name: "Rice",
+    };
+    let units = [piece, carton];
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    mockApi((url, init) => {
+      requests.push({ url, init });
+      if (url === "/api/v1/units" && !init?.method) return json(units);
+      if (url === "/api/v1/products" && !init?.method) return json([]);
+      if (url === "/api/v1/units" && init?.method === "POST") {
+        units = [...units, pallet];
+        return json(pallet, 201);
+      }
+      if (url === "/api/v1/products" && init?.method === "POST")
+        return json(createdProduct, 201);
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    await screen.findByText("No products are available.");
+
+    await browser.type(screen.getByLabelText("Unit code"), "PALLET");
+    await browser.type(screen.getByLabelText("Unit name"), "Pallets");
+    await browser.click(screen.getByRole("button", { name: "Create unit" }));
+    expect(await screen.findByText("Unit created.")).toBeInTheDocument();
+
+    await browser.type(screen.getByLabelText("Product SKU"), "RICE");
+    await browser.type(screen.getByLabelText("Product name"), "Rice");
+    await browser.selectOptions(screen.getByLabelText("Base unit"), piece.id);
+    await browser.click(screen.getByRole("button", { name: "Create product" }));
+    expect(await screen.findByText("Product created.")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("RICE")).toBeInTheDocument();
+
+    const unitRequest = requests.find(
+      ({ url, init }) => url === "/api/v1/units" && init?.method === "POST",
+    );
+    const productRequest = requests.find(
+      ({ url, init }) => url === "/api/v1/products" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(unitRequest?.init?.body))).toEqual({
+      code: "PALLET",
+      name: "Pallets",
+    });
+    expect(JSON.parse(String(productRequest?.init?.body))).toEqual({
+      sku: "RICE",
+      name: "Rice",
+      baseUnitId: piece.id,
+    });
+  });
+
+  it("loads conversions on expansion, retries failures, and reuses loaded data", async () => {
+    const browser = userEvent.setup();
+    let conversionRequests = 0;
+    mockApi((url, init) => {
+      if (url === "/api/v1/units" && !init?.method)
+        return json([piece, carton]);
+      if (url === "/api/v1/products" && !init?.method) return json([product]);
+      if (
+        url === `/api/v1/products/${product.id}/conversions` &&
+        !init?.method
+      ) {
+        conversionRequests += 1;
+        return conversionRequests === 1
+          ? json({ message: "unavailable" }, 503)
+          : json([conversion]);
+      }
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    expect(await screen.findByDisplayValue("Bar Soap")).toBeInTheDocument();
+    expect(conversionRequests).toBe(0);
+
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(
+      await screen.findByText("Unable to load conversions."),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Bar Soap")).toBeInTheDocument();
+    expect(conversionRequests).toBe(1);
+
+    await browser.click(
+      screen.getByRole("button", { name: "Retry conversions for SOAP" }),
+    );
+    expect(await screen.findByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
+    expect(conversionRequests).toBe(2);
+
+    await browser.click(
+      screen.getByRole("button", { name: "Hide details for SOAP" }),
+    );
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(screen.getByText("1 CARTON = 24 PIECE")).toBeInTheDocument();
+    expect(conversionRequests).toBe(2);
+  });
+
+  it("rejects zero and negative conversion factors without API mutations", async () => {
+    const browser = userEvent.setup();
+    let conversionMutations = 0;
+    mockApi((url, init) => {
+      if (url === "/api/v1/units" && !init?.method)
+        return json([piece, carton, box]);
+      if (url === "/api/v1/products" && !init?.method) return json([product]);
+      if (url === `/api/v1/products/${product.id}/conversions`) {
+        if (init?.method) conversionMutations += 1;
+        return json([conversion]);
+      }
+      if (url === `/api/v1/products/${product.id}/conversions/${carton.id}`) {
+        conversionMutations += 1;
+        return json(conversion);
+      }
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    await screen.findByDisplayValue("Bar Soap");
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    const factor = await screen.findByLabelText("CARTON factor");
+    await browser.clear(factor);
+    await browser.type(factor, "0");
+    expect(
+      screen.getByRole("button", { name: "Save CARTON conversion" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Conversion factor must be greater than zero."),
+    ).toBeInTheDocument();
+
+    await browser.clear(factor);
+    await browser.type(factor, "-0.0001");
+    expect(
+      screen.getByRole("button", { name: "Save CARTON conversion" }),
+    ).toBeDisabled();
+
+    await browser.selectOptions(
+      screen.getByLabelText("Alternate unit for SOAP"),
+      box.id,
+    );
+    await browser.type(
+      screen.getByLabelText("Conversion factor for SOAP"),
+      "-1",
+    );
+    await browser.click(
+      screen.getByRole("button", { name: "Add conversion for SOAP" }),
+    );
+    expect(
+      screen.getAllByText("Conversion factor must be greater than zero."),
+    ).toHaveLength(2);
+    expect(conversionMutations).toBe(0);
   });
 
   it("does not present failed catalog loads as empty results", async () => {
