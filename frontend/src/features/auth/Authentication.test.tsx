@@ -91,6 +91,7 @@ describe("authentication", () => {
 
   it("ignores an out-of-order session response after sign-out", async () => {
     const browser = userEvent.setup();
+    const eventListenerSpy = vi.spyOn(window, "addEventListener");
     let sessionRequests = 0;
     let resolveRevalidation!: (response: Response) => void;
     const revalidation = new Promise<Response>((resolve) => {
@@ -110,6 +111,12 @@ describe("authentication", () => {
     expect(
       await screen.findByText("Initial Administrator"),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventListenerSpy).toHaveBeenCalledWith(
+        "focus",
+        expect.any(Function),
+      ),
+    );
     fireEvent.focus(window);
     await waitFor(() => expect(sessionRequests).toBe(2));
     await browser.click(screen.getByRole("button", { name: "Sign out" }));
