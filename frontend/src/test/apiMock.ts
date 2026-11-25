@@ -34,6 +34,11 @@ export function mockApi(
     if (url === "/api/v1/staff") return Promise.resolve(json([]));
     if (url === "/api/v1/locations") return Promise.resolve(json([]));
     if (url === "/api/v1/warehouses") return Promise.resolve(json([]));
+    if (url === "/api/v1/units") return Promise.resolve(json([]));
+    if (url === "/api/v1/products") return Promise.resolve(json([]));
+    if (/^\/api\/v1\/products\/[^/]+\/conversions$/.test(url)) {
+      return Promise.resolve(json([]));
+    }
     if (url === "/api/v1/auth/csrf") {
       return Promise.resolve(
         json({ headerName: "X-CSRF-TOKEN", token: "csrf-token" }),

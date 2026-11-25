@@ -230,6 +230,25 @@ h1 {
   width: auto;
 }
 
+.conversion-list {
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #d8e2dc;
+}
+
+.conversion-item {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: #f7faf8;
+}
+
+.conversion-form {
+  margin-top: 1rem;
+}
+
 .staff-panel h2,
 .staff-panel h3 {
   margin: 0 0 1rem;

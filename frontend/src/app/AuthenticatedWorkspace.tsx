@@ -1,4 +1,5 @@
 import { useState } from "react";
+import CatalogManagement from "../features/catalog/CatalogManagement";
 import LocationManagement from "../features/locations/LocationManagement";
 import StaffManagement from "../features/staff/StaffManagement";
 import { User } from "../features/auth/types";
@@ -18,6 +19,10 @@ export default function AuthenticatedWorkspace({
 
   return (
     <>
+      <CatalogManagement
+        isAdmin={isAdmin}
+        onSessionExpired={onSessionExpired}
+      />
       <LocationManagement
         isAdmin={isAdmin}
         onSessionExpired={onSessionExpired}
