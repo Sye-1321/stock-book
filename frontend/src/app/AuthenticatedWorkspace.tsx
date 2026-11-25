@@ -4,6 +4,7 @@ import LocationManagement from "../features/locations/LocationManagement";
 import StaffManagement from "../features/staff/StaffManagement";
 import { User } from "../features/auth/types";
 import WarehouseManagement from "../features/warehouses/WarehouseManagement";
+import InventoryManagement from "../features/inventory/InventoryManagement";
 
 type Props = {
   user: User;
@@ -33,6 +34,10 @@ export default function AuthenticatedWorkspace({
       <WarehouseManagement
         isAdmin={isAdmin}
         locationsRevision={locationsRevision}
+        onSessionExpired={onSessionExpired}
+      />
+      <InventoryManagement
+        isAdmin={isAdmin}
         onSessionExpired={onSessionExpired}
       />
       {isAdmin && (

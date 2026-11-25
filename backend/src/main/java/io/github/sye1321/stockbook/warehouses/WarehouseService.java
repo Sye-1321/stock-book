@@ -58,6 +58,9 @@ public class WarehouseService {
         String normalizedCode = normalizeCode(code);
         String normalizedName = normalizeName(name);
         Warehouse existing = warehouseRepository.findByIdForUpdate(id).orElseThrow(WarehouseNotFoundException::new);
+        if (existing.active() && !active && warehouseRepository.hasNonzeroStock(id)) {
+            throw new WarehouseConflictException("A warehouse with nonzero stock cannot be deactivated");
+        }
         if (!existing.active() && active) {
             Location location = locationRepository
                     .findByIdForUpdate(existing.locationId())

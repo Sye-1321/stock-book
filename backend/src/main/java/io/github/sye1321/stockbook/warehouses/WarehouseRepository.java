@@ -62,6 +62,19 @@ public class WarehouseRepository {
                 .single();
     }
 
+    public boolean hasNonzeroStock(UUID warehouseId) {
+        return jdbcClient
+                .sql("""
+                        select exists (
+                            select 1 from stock_balance
+                            where warehouse_id = :warehouseId and base_quantity <> 0
+                        )
+                        """)
+                .param("warehouseId", warehouseId)
+                .query(Boolean.class)
+                .single();
+    }
+
     public void insert(Warehouse warehouse) {
         jdbcClient
                 .sql("""

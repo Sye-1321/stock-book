@@ -126,6 +126,8 @@ public class SecurityConfiguration {
                         .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/units/**", "/api/v1/products/**")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/inventory/movements")
+                        .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/locations/**", "/api/v1/warehouses/**")
                         .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/units/**", "/api/v1/products/**")
