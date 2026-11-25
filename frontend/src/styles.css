@@ -151,6 +151,85 @@ h1 {
   background: #fff;
 }
 
+.management-panel {
+  margin-top: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid #d8e2dc;
+  border-radius: 0.8rem;
+  background: #fff;
+}
+
+.management-panel h2,
+.management-panel h3 {
+  margin: 0 0 1rem;
+}
+
+.management-form,
+.management-form label,
+.management-item,
+.management-item label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.management-form,
+.management-item {
+  gap: 1rem;
+}
+
+.management-panel input,
+.management-panel select {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #aebbb4;
+  border-radius: 0.5rem;
+  background: white;
+  font: inherit;
+}
+
+.management-panel button {
+  width: fit-content;
+  padding: 0.7rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  color: white;
+  background: #216b49;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.management-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.management-list {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #d8e2dc;
+}
+
+.management-item {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #d8e2dc;
+  border-radius: 0.6rem;
+}
+
+.management-item p {
+  margin: 0;
+}
+
+.management-item .checkbox-label {
+  display: flex;
+  align-items: center;
+}
+
+.management-item .checkbox-label input {
+  width: auto;
+}
+
 .staff-panel h2,
 .staff-panel h3 {
   margin: 0 0 1rem;

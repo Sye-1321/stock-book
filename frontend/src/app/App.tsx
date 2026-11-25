@@ -1,7 +1,7 @@
 import AuthPanel from "../features/auth/AuthPanel";
 import { useAuthentication } from "../features/auth/useAuthentication";
-import StaffManagement from "../features/staff/StaffManagement";
 import ConnectivityPanel from "../features/system/ConnectivityPanel";
+import AuthenticatedWorkspace from "./AuthenticatedWorkspace";
 
 export default function App() {
   const authentication = useAuthentication();
@@ -25,13 +25,12 @@ export default function App() {
           onLogout={authentication.logout}
           onChangePassword={authentication.changePassword}
         />
-        {authentication.auth.kind === "authenticated" &&
-          authentication.auth.user.role === "ADMIN" && (
-            <StaffManagement
-              currentUser={authentication.auth.user}
-              onSessionExpired={authentication.expireSession}
-            />
-          )}
+        {authentication.auth.kind === "authenticated" && (
+          <AuthenticatedWorkspace
+            user={authentication.auth.user}
+            onSessionExpired={authentication.expireSession}
+          />
+        )}
       </section>
     </main>
   );

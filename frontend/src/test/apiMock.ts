@@ -32,6 +32,8 @@ export function mockApi(
       return Promise.resolve(json({ database: "UP" }));
     if (url === "/api/v1/auth/me") return Promise.resolve(json({}, 401));
     if (url === "/api/v1/staff") return Promise.resolve(json([]));
+    if (url === "/api/v1/locations") return Promise.resolve(json([]));
+    if (url === "/api/v1/warehouses") return Promise.resolve(json([]));
     if (url === "/api/v1/auth/csrf") {
       return Promise.resolve(
         json({ headerName: "X-CSRF-TOKEN", token: "csrf-token" }),
