@@ -17,6 +17,15 @@ type Warehouse = {
 
 type Draft = Pick<Warehouse, "code" | "name" | "active">;
 
+function differsFromWarehouse(warehouse: Warehouse, draft: Draft | undefined) {
+  return (
+    draft !== undefined &&
+    (draft.code !== warehouse.code ||
+      draft.name !== warehouse.name ||
+      draft.active !== warehouse.active)
+  );
+}
+
 type Props = {
   isAdmin: boolean;
   locationsRevision: number;
@@ -47,6 +56,7 @@ export default function WarehouseManagement({
   const [locations, setLocations] = useState<Location[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
+  const [loadSucceeded, setLoadSucceeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
@@ -64,6 +74,7 @@ export default function WarehouseManagement({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setLoadSucceeded(false);
     void (async () => {
       try {
         const [warehouseResponse, locationResponse] = await Promise.all([
@@ -97,6 +108,7 @@ export default function WarehouseManagement({
         ) {
           setWarehouses(warehouseBody);
           setLocations(locationBody);
+          setLoadSucceeded(true);
         } else {
           setMessage("Unable to load warehouses.");
         }
@@ -155,17 +167,23 @@ export default function WarehouseManagement({
   }
 
   function edit(warehouse: Warehouse, changes: Partial<Draft>) {
-    setDrafts((current) => ({
-      ...current,
-      [warehouse.id]: {
+    setDrafts((current) => {
+      const draft = {
         ...(current[warehouse.id] ?? {
           code: warehouse.code,
           name: warehouse.name,
           active: warehouse.active,
         }),
         ...changes,
-      },
-    }));
+      };
+      const next = { ...current };
+      if (differsFromWarehouse(warehouse, draft)) {
+        next[warehouse.id] = draft;
+      } else {
+        delete next[warehouse.id];
+      }
+      return next;
+    });
   }
 
   async function save(warehouse: Warehouse, draft: Draft) {
@@ -242,11 +260,15 @@ export default function WarehouseManagement({
       )}
       <div className="management-list" aria-live="polite">
         {loading && <p>Loading warehouses…</p>}
-        {!loading && warehouses.length === 0 && (
+        {!loading && loadSucceeded && warehouses.length === 0 && (
           <p>No warehouses are available.</p>
         )}
         {warehouses.map((warehouse) => {
           const draft = drafts[warehouse.id] ?? warehouse;
+          const modified = differsFromWarehouse(
+            warehouse,
+            drafts[warehouse.id],
+          );
           return (
             <article className="management-item" key={warehouse.id}>
               {isAdmin ? (
@@ -285,9 +307,10 @@ export default function WarehouseManagement({
                     />
                     Active
                   </label>
+                  {modified && <p>Unsaved changes</p>}
                   <button
                     type="button"
-                    disabled={busy || !drafts[warehouse.id]}
+                    disabled={busy || !modified}
                     onClick={() => save(warehouse, draft)}
                   >
                     Save {warehouse.code}

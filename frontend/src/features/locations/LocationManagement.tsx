@@ -13,6 +13,15 @@ export type Location = {
 
 type Draft = Pick<Location, "code" | "name" | "active">;
 
+function differsFromLocation(location: Location, draft: Draft | undefined) {
+  return (
+    draft !== undefined &&
+    (draft.code !== location.code ||
+      draft.name !== location.name ||
+      draft.active !== location.active)
+  );
+}
+
 type Props = {
   isAdmin: boolean;
   onSessionExpired: (message?: string) => void;
@@ -39,6 +48,7 @@ export default function LocationManagement({
   const [locations, setLocations] = useState<Location[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
+  const [loadSucceeded, setLoadSucceeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
@@ -55,6 +65,7 @@ export default function LocationManagement({
 
   useEffect(() => {
     const controller = new AbortController();
+    setLoadSucceeded(false);
     void (async () => {
       try {
         const response = await fetch("/api/v1/locations", {
@@ -68,6 +79,7 @@ export default function LocationManagement({
         const body = await readJson(response);
         if (response.ok && Array.isArray(body) && body.every(isLocation)) {
           setLocations(body);
+          setLoadSucceeded(true);
         } else {
           setMessage("Unable to load locations.");
         }
@@ -126,17 +138,23 @@ export default function LocationManagement({
   }
 
   function edit(location: Location, changes: Partial<Draft>) {
-    setDrafts((current) => ({
-      ...current,
-      [location.id]: {
+    setDrafts((current) => {
+      const draft = {
         ...(current[location.id] ?? {
           code: location.code,
           name: location.name,
           active: location.active,
         }),
         ...changes,
-      },
-    }));
+      };
+      const next = { ...current };
+      if (differsFromLocation(location, draft)) {
+        next[location.id] = draft;
+      } else {
+        delete next[location.id];
+      }
+      return next;
+    });
   }
 
   async function save(location: Location, draft: Draft) {
@@ -199,11 +217,12 @@ export default function LocationManagement({
       )}
       <div className="management-list" aria-live="polite">
         {loading && <p>Loading locations…</p>}
-        {!loading && locations.length === 0 && (
+        {!loading && loadSucceeded && locations.length === 0 && (
           <p>No locations are available.</p>
         )}
         {locations.map((location) => {
           const draft = drafts[location.id] ?? location;
+          const modified = differsFromLocation(location, drafts[location.id]);
           return (
             <article className="management-item" key={location.id}>
               {isAdmin ? (
@@ -238,9 +257,10 @@ export default function LocationManagement({
                     />
                     Active
                   </label>
+                  {modified && <p>Unsaved changes</p>}
                   <button
                     type="button"
-                    disabled={busy || !drafts[location.id]}
+                    disabled={busy || !modified}
                     onClick={() => save(location, draft)}
                   >
                     Save {location.code}
