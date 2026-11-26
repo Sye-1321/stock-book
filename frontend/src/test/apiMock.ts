@@ -36,6 +36,7 @@ export function mockApi(
     if (url === "/api/v1/warehouses") return Promise.resolve(json([]));
     if (url === "/api/v1/units") return Promise.resolve(json([]));
     if (url === "/api/v1/products") return Promise.resolve(json([]));
+    if (url === "/api/v1/suppliers") return Promise.resolve(json([]));
     if (url === "/api/v1/inventory/balances") return Promise.resolve(json([]));
     if (url === "/api/v1/inventory/movements?page=0&size=50")
       return Promise.resolve(

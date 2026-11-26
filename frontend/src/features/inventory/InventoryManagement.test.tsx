@@ -40,6 +40,8 @@ function movement(requestId: string) {
     id: "55555555-5555-4555-8555-555555555555",
     requestId,
     transferId: null,
+    receiptLineId: null,
+    receiptId: null,
     warehouseId: warehouse.id,
     warehouseCode: warehouse.code,
     productId: product.id,

@@ -17,7 +17,8 @@ import org.springframework.stereotype.Repository;
 public class InventoryRepository {
 
     private static final String MOVEMENT_SELECT = """
-            select m.id, m.request_id, m.transfer_id, m.warehouse_id, w.code as warehouse_code,
+            select m.id, m.request_id, m.transfer_id, m.receipt_line_id, rl.receipt_id,
+                   m.warehouse_id, w.code as warehouse_code,
                    m.product_id, p.sku as product_sku, m.movement_type,
                    m.entered_quantity, m.entered_unit_id, u.code as entered_unit_code,
                    m.conversion_factor, m.base_quantity, m.reason, m.posted_by,
@@ -27,6 +28,25 @@ public class InventoryRepository {
             join product p on p.id = m.product_id
             join unit_of_measure u on u.id = m.entered_unit_id
             join app_user a on a.id = m.posted_by
+            left join goods_receipt_line rl on rl.id = m.receipt_line_id
+            """;
+    private static final String RECEIPT_SELECT = """
+            select r.id, r.request_id, r.supplier_id, s.code as supplier_code,
+                   r.warehouse_id, w.code as warehouse_code,
+                   r.supplier_document_reference, r.posted_by,
+                   a.display_name as posted_by_name, r.posted_at
+            from goods_receipt r
+            join supplier s on s.id = r.supplier_id
+            join warehouse w on w.id = r.warehouse_id
+            join app_user a on a.id = r.posted_by
+            """;
+    private static final String RECEIPT_LINE_SELECT = """
+            select l.id, l.line_number, l.product_id, p.sku as product_sku,
+                   l.entered_quantity, l.entered_unit_id, u.code as entered_unit_code,
+                   l.conversion_factor, l.base_quantity
+            from goods_receipt_line l
+            join product p on p.id = l.product_id
+            join unit_of_measure u on u.id = l.entered_unit_id
             """;
     private static final String TRANSFER_SELECT = """
             select t.id, t.request_id, t.source_warehouse_id,
@@ -71,6 +91,14 @@ public class InventoryRepository {
                 .sql(TRANSFER_SELECT + " where t.request_id = :requestId")
                 .param("requestId", requestId)
                 .query(InventoryRepository::mapTransfer)
+                .optional();
+    }
+
+    public Optional<GoodsReceipt> findReceiptByRequestId(UUID requestId) {
+        return jdbcClient
+                .sql(RECEIPT_SELECT + " where r.request_id = :requestId")
+                .param("requestId", requestId)
+                .query((resultSet, rowNumber) -> mapReceipt(resultSet))
                 .optional();
     }
 
@@ -121,6 +149,7 @@ public class InventoryRepository {
             UUID id,
             UUID requestId,
             UUID transferId,
+            UUID receiptLineId,
             UUID warehouseId,
             UUID productId,
             MovementType type,
@@ -134,11 +163,13 @@ public class InventoryRepository {
         jdbcClient
                 .sql("""
                         insert into inventory_movement (
-                            id, request_id, transfer_id, warehouse_id, product_id, movement_type,
+                            id, request_id, transfer_id, receipt_line_id,
+                            warehouse_id, product_id, movement_type,
                             entered_quantity, entered_unit_id, conversion_factor, base_quantity,
                             reason, posted_by, posted_at
                         ) values (
-                            :id, :requestId, :transferId, :warehouseId, :productId, :type,
+                            :id, :requestId, :transferId, :receiptLineId,
+                            :warehouseId, :productId, :type,
                             :enteredQuantity, :enteredUnitId, :conversionFactor, :baseQuantity,
                             :reason, :postedBy, :postedAt
                         )
@@ -146,6 +177,7 @@ public class InventoryRepository {
                 .param("id", id)
                 .param("requestId", requestId, Types.OTHER)
                 .param("transferId", transferId, Types.OTHER)
+                .param("receiptLineId", receiptLineId, Types.OTHER)
                 .param("warehouseId", warehouseId)
                 .param("productId", productId)
                 .param("type", type.name())
@@ -156,6 +188,64 @@ public class InventoryRepository {
                 .param("reason", reason)
                 .param("postedBy", postedBy)
                 .param("postedAt", timestamp(postedAt))
+                .update();
+    }
+
+    public void insertReceipt(
+            UUID id,
+            UUID requestId,
+            UUID supplierId,
+            UUID warehouseId,
+            String supplierDocumentReference,
+            UUID postedBy,
+            Instant postedAt) {
+        jdbcClient
+                .sql("""
+                        insert into goods_receipt (
+                            id, request_id, supplier_id, warehouse_id,
+                            supplier_document_reference, posted_by, posted_at
+                        ) values (
+                            :id, :requestId, :supplierId, :warehouseId,
+                            :reference, :postedBy, :postedAt
+                        )
+                        """)
+                .param("id", id)
+                .param("requestId", requestId)
+                .param("supplierId", supplierId)
+                .param("warehouseId", warehouseId)
+                .param("reference", supplierDocumentReference, Types.VARCHAR)
+                .param("postedBy", postedBy)
+                .param("postedAt", timestamp(postedAt))
+                .update();
+    }
+
+    public void insertReceiptLine(
+            UUID id,
+            UUID receiptId,
+            int lineNumber,
+            UUID productId,
+            BigDecimal enteredQuantity,
+            UUID enteredUnitId,
+            BigDecimal conversionFactor,
+            BigDecimal baseQuantity) {
+        jdbcClient
+                .sql("""
+                        insert into goods_receipt_line (
+                            id, receipt_id, line_number, product_id, entered_quantity,
+                            entered_unit_id, conversion_factor, base_quantity
+                        ) values (
+                            :id, :receiptId, :lineNumber, :productId, :enteredQuantity,
+                            :enteredUnitId, :conversionFactor, :baseQuantity
+                        )
+                        """)
+                .param("id", id)
+                .param("receiptId", receiptId)
+                .param("lineNumber", lineNumber)
+                .param("productId", productId)
+                .param("enteredQuantity", enteredQuantity)
+                .param("enteredUnitId", enteredUnitId)
+                .param("conversionFactor", conversionFactor)
+                .param("baseQuantity", baseQuantity)
                 .update();
     }
 
@@ -256,6 +346,8 @@ public class InventoryRepository {
                 resultSet.getObject("id", UUID.class),
                 resultSet.getObject("request_id", UUID.class),
                 resultSet.getObject("transfer_id", UUID.class),
+                resultSet.getObject("receipt_line_id", UUID.class),
+                resultSet.getObject("receipt_id", UUID.class),
                 resultSet.getObject("warehouse_id", UUID.class),
                 resultSet.getString("warehouse_code"),
                 resultSet.getObject("product_id", UUID.class),
@@ -270,6 +362,41 @@ public class InventoryRepository {
                 resultSet.getObject("posted_by", UUID.class),
                 resultSet.getString("posted_by_name"),
                 resultSet.getObject("posted_at", OffsetDateTime.class).toInstant());
+    }
+
+    private GoodsReceipt mapReceipt(ResultSet resultSet) throws SQLException {
+        UUID receiptId = resultSet.getObject("id", UUID.class);
+        List<GoodsReceiptLine> lines = jdbcClient
+                .sql(RECEIPT_LINE_SELECT + " where l.receipt_id = :receiptId order by l.line_number")
+                .param("receiptId", receiptId)
+                .query(InventoryRepository::mapReceiptLine)
+                .list();
+        return new GoodsReceipt(
+                receiptId,
+                resultSet.getObject("request_id", UUID.class),
+                resultSet.getObject("supplier_id", UUID.class),
+                resultSet.getString("supplier_code"),
+                resultSet.getObject("warehouse_id", UUID.class),
+                resultSet.getString("warehouse_code"),
+                resultSet.getString("supplier_document_reference"),
+                resultSet.getObject("posted_by", UUID.class),
+                resultSet.getString("posted_by_name"),
+                resultSet.getObject("posted_at", OffsetDateTime.class).toInstant(),
+                lines);
+    }
+
+    private static GoodsReceiptLine mapReceiptLine(ResultSet resultSet, int rowNumber)
+            throws SQLException {
+        return new GoodsReceiptLine(
+                resultSet.getObject("id", UUID.class),
+                resultSet.getInt("line_number"),
+                resultSet.getObject("product_id", UUID.class),
+                resultSet.getString("product_sku"),
+                resultSet.getBigDecimal("entered_quantity"),
+                resultSet.getObject("entered_unit_id", UUID.class),
+                resultSet.getString("entered_unit_code"),
+                resultSet.getBigDecimal("conversion_factor"),
+                resultSet.getBigDecimal("base_quantity"));
     }
 
     private static InventoryTransfer mapTransfer(ResultSet resultSet, int rowNumber)

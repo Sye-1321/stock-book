@@ -8,6 +8,8 @@ public record InventoryMovement(
         UUID id,
         UUID requestId,
         UUID transferId,
+        UUID receiptLineId,
+        UUID receiptId,
         UUID warehouseId,
         String warehouseCode,
         UUID productId,

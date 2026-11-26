@@ -66,6 +66,28 @@ public class InventoryController {
                 .body(response);
     }
 
+    @PostMapping("/receipts")
+    public ResponseEntity<ReceiptResponse> receipt(
+            @RequestBody PostReceiptRequest request,
+            @AuthenticationPrincipal StockBookUserDetails user) {
+        InventoryService.ReceiptResult result = service.receive(
+                request == null ? null : request.requestId(),
+                request == null ? null : request.supplierId(),
+                request == null ? null : request.warehouseId(),
+                request == null ? null : request.supplierDocumentReference(),
+                request == null || request.lines() == null
+                        ? null
+                        : request.lines().stream()
+                                .map(line -> new InventoryService.ReceiptLineRequest(
+                                        line.productId(), line.quantity(), line.unitId()))
+                                .toList(),
+                user.id());
+        ReceiptResponse response = ReceiptResponse.from(result.receipt());
+        if (!result.created()) return ResponseEntity.ok(response);
+        return ResponseEntity.created(URI.create("/api/v1/inventory/receipts/" + response.id()))
+                .body(response);
+    }
+
     @GetMapping("/balances")
     public List<BalanceResponse> balances(
             @RequestParam(required = false) UUID warehouseId,
@@ -116,10 +138,21 @@ public class InventoryController {
             UUID unitId,
             String reason) {}
 
+    public record PostReceiptRequest(
+            UUID requestId,
+            UUID supplierId,
+            UUID warehouseId,
+            String supplierDocumentReference,
+            List<PostReceiptLineRequest> lines) {}
+
+    public record PostReceiptLineRequest(UUID productId, BigDecimal quantity, UUID unitId) {}
+
     public record MovementResponse(
             UUID id,
             UUID requestId,
             UUID transferId,
+            UUID receiptLineId,
+            UUID receiptId,
             UUID warehouseId,
             String warehouseCode,
             UUID productId,
@@ -139,6 +172,8 @@ public class InventoryController {
                     movement.id(),
                     movement.requestId(),
                     movement.transferId(),
+                    movement.receiptLineId(),
+                    movement.receiptId(),
                     movement.warehouseId(),
                     movement.warehouseCode(),
                     movement.productId(),
@@ -153,6 +188,58 @@ public class InventoryController {
                     movement.postedBy(),
                     movement.postedByName(),
                     movement.postedAt());
+        }
+    }
+
+    public record ReceiptResponse(
+            UUID id,
+            UUID requestId,
+            UUID supplierId,
+            String supplierCode,
+            UUID warehouseId,
+            String warehouseCode,
+            String supplierDocumentReference,
+            UUID postedBy,
+            String postedByName,
+            java.time.Instant postedAt,
+            List<ReceiptLineResponse> lines) {
+        static ReceiptResponse from(GoodsReceipt receipt) {
+            return new ReceiptResponse(
+                    receipt.id(),
+                    receipt.requestId(),
+                    receipt.supplierId(),
+                    receipt.supplierCode(),
+                    receipt.warehouseId(),
+                    receipt.warehouseCode(),
+                    receipt.supplierDocumentReference(),
+                    receipt.postedBy(),
+                    receipt.postedByName(),
+                    receipt.postedAt(),
+                    receipt.lines().stream().map(ReceiptLineResponse::from).toList());
+        }
+    }
+
+    public record ReceiptLineResponse(
+            UUID id,
+            int lineNumber,
+            UUID productId,
+            String productSku,
+            String enteredQuantity,
+            UUID enteredUnitId,
+            String enteredUnitCode,
+            String conversionFactor,
+            String baseQuantity) {
+        static ReceiptLineResponse from(GoodsReceiptLine line) {
+            return new ReceiptLineResponse(
+                    line.id(),
+                    line.lineNumber(),
+                    line.productId(),
+                    line.productSku(),
+                    line.enteredQuantity().toPlainString(),
+                    line.enteredUnitId(),
+                    line.enteredUnitCode(),
+                    line.conversionFactor().toPlainString(),
+                    line.baseQuantity().toPlainString());
         }
     }
 

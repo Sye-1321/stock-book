@@ -32,6 +32,8 @@ type Movement = {
   id: string;
   requestId: string | null;
   transferId: string | null;
+  receiptLineId: string | null;
+  receiptId: string | null;
   warehouseId: string;
   warehouseCode: string;
   productId: string;
@@ -41,7 +43,8 @@ type Movement = {
     | "ADJUSTMENT_IN"
     | "ADJUSTMENT_OUT"
     | "TRANSFER_IN"
-    | "TRANSFER_OUT";
+    | "TRANSFER_OUT"
+    | "RECEIPT_IN";
   enteredQuantity: string;
   enteredUnitId: string;
   enteredUnitCode: string;
@@ -83,6 +86,7 @@ type MovementPage = {
 type Props = {
   isAdmin: boolean;
   onSessionExpired: (message?: string) => void;
+  revision?: number;
 };
 
 function isWarehouse(value: unknown): value is Warehouse {
@@ -117,6 +121,8 @@ function isMovement(value: unknown): value is Movement {
     typeof value.id === "string" &&
     (typeof value.requestId === "string" || value.requestId === null) &&
     (typeof value.transferId === "string" || value.transferId === null) &&
+    (typeof value.receiptLineId === "string" || value.receiptLineId === null) &&
+    (typeof value.receiptId === "string" || value.receiptId === null) &&
     typeof value.warehouseId === "string" &&
     typeof value.warehouseCode === "string" &&
     typeof value.productId === "string" &&
@@ -125,7 +131,8 @@ function isMovement(value: unknown): value is Movement {
       value.type === "ADJUSTMENT_IN" ||
       value.type === "ADJUSTMENT_OUT" ||
       value.type === "TRANSFER_IN" ||
-      value.type === "TRANSFER_OUT") &&
+      value.type === "TRANSFER_OUT" ||
+      value.type === "RECEIPT_IN") &&
     typeof value.enteredQuantity === "string" &&
     typeof value.enteredUnitId === "string" &&
     typeof value.enteredUnitCode === "string" &&
@@ -180,6 +187,7 @@ function isPositiveDecimal(value: string) {
 export default function InventoryManagement({
   isAdmin,
   onSessionExpired,
+  revision = 0,
 }: Props) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -253,7 +261,7 @@ export default function InventoryManagement({
     } finally {
       setLoading(false);
     }
-  }, [onSessionExpired]);
+  }, [onSessionExpired, revision]);
 
   useEffect(() => {
     void loadInventory();
@@ -747,6 +755,9 @@ export default function InventoryManagement({
                   </p>
                   {movement.transferId && (
                     <p>Linked transfer: {movement.transferId}</p>
+                  )}
+                  {movement.receiptLineId && (
+                    <p>Linked receipt: {movement.receiptId}</p>
                   )}
                   <p>
                     {movement.enteredQuantity} {movement.enteredUnitCode} ={" "}
