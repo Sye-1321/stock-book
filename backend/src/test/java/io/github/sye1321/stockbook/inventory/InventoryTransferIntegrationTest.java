@@ -91,7 +91,7 @@ class InventoryTransferIntegrationTest {
         piece = unitService.create("PIECE", "Pieces");
         carton = unitService.create("CARTON", "Cartons");
         product = productService.create("SOAP", "Bar Soap", piece.id());
-        productService.createConversion(product.id(), carton.id(), new BigDecimal("24.125"));
+        productService.createConversion(product.id(), carton.id(), new BigDecimal("24"));
         Location location = locationService.create("NAI", "Nairobi");
         firstWarehouse = warehouseService.create("FIRST", "First Warehouse", location.id());
         secondWarehouse = warehouseService.create("SECOND", "Second Warehouse", location.id());
@@ -105,27 +105,27 @@ class InventoryTransferIntegrationTest {
                 requestId,
                 firstWarehouse.id(),
                 secondWarehouse.id(),
-                "2.5000000000000000001",
+                "2.5",
                 carton.id(),
                 "Rebalance stock");
         InventoryService.TransferResult retry = transfer(
                 requestId,
                 firstWarehouse.id(),
                 secondWarehouse.id(),
-                "2.50000000000000000010",
+                "2.50",
                 carton.id(),
                 " Rebalance stock ");
 
         assertThat(first.created()).isTrue();
         assertThat(retry.created()).isFalse();
         assertThat(retry.transfer().id()).isEqualTo(first.transfer().id());
-        assertThat(first.transfer().conversionFactor()).isEqualByComparingTo("24.125");
+        assertThat(first.transfer().conversionFactor()).isEqualByComparingTo("24");
         assertThat(first.transfer().baseQuantity())
-                .isEqualByComparingTo("60.3125000000000000024125");
+                .isEqualByComparingTo("60");
         assertThat(balance(firstWarehouse.id()))
-                .isEqualByComparingTo("39.6874999999999999975875");
+                .isEqualByComparingTo("40");
         assertThat(balance(secondWarehouse.id()))
-                .isEqualByComparingTo("60.3125000000000000024125");
+                .isEqualByComparingTo("60");
         assertThat(jdbcClient
                         .sql("select count(*) from inventory_movement where transfer_id = :id")
                         .param("id", first.transfer().id())
@@ -140,7 +140,7 @@ class InventoryTransferIntegrationTest {
                         .param("id", first.transfer().id())
                         .query(BigDecimal.class)
                         .single())
-                .isEqualByComparingTo("-60.3125000000000000024125");
+                .isEqualByComparingTo("-60");
 
         assertThatThrownBy(() -> transfer(
                         requestId,

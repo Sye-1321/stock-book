@@ -89,6 +89,7 @@ public class InventoryService {
 
         BigDecimal factor = conversionFactor(product, enteredUnitId);
         BigDecimal unsignedBaseQuantity = enteredQuantity.multiply(factor);
+        requireWholeBaseQuantity(unsignedBaseQuantity);
         BigDecimal signedBaseQuantity = type == MovementType.ADJUSTMENT_OUT
                 ? unsignedBaseQuantity.negate()
                 : unsignedBaseQuantity;
@@ -184,6 +185,7 @@ public class InventoryService {
         if (!product.active()) throw new InvalidInventoryException("Product must be active");
         BigDecimal factor = conversionFactor(product, enteredUnitId);
         BigDecimal baseQuantity = enteredQuantity.multiply(factor);
+        requireWholeBaseQuantity(baseQuantity);
 
         BigDecimal firstBalance = inventoryRepository
                 .lockBalance(firstWarehouseId, productId)
@@ -304,8 +306,10 @@ public class InventoryService {
                     .orElseThrow(() -> new InvalidInventoryException("Product was not found"));
             if (!product.active()) throw new InvalidInventoryException("All receipt products must be active");
             BigDecimal factor = conversionFactor(product, line.unitId());
+            BigDecimal baseQuantity = line.quantity().multiply(factor);
+            requireWholeBaseQuantity(baseQuantity);
             prepared.add(new PreparedReceiptLine(
-                    line, factor, line.quantity().multiply(factor)));
+                    line, factor, baseQuantity));
         }
 
         List<BigDecimal> currentBalances = new ArrayList<>();
@@ -385,11 +389,22 @@ public class InventoryService {
 
     private BigDecimal conversionFactor(Product product, UUID enteredUnitId) {
         if (product.baseUnitId().equals(enteredUnitId)) return BigDecimal.ONE;
-        return productRepository
+        ProductUnitConversion conversion = productRepository
                 .findConversion(product.id(), enteredUnitId)
-                .map(ProductUnitConversion::conversionFactor)
                 .orElseThrow(() -> new InvalidInventoryException(
                         "Entered unit must be the product's base unit or a configured conversion"));
+        if (!conversion.active() || !conversion.packagingCompatible()) {
+            throw new InvalidInventoryException(
+                    "Entered unit must use an active integer packaging configuration");
+        }
+        return conversion.conversionFactor();
+    }
+
+    private static void requireWholeBaseQuantity(BigDecimal baseQuantity) {
+        if (baseQuantity.stripTrailingZeros().scale() > 0) {
+            throw new InvalidInventoryException(
+                    "Quantity must produce a whole number of base units");
+        }
     }
 
     private InventoryRepository.WarehouseState requireActiveWarehouse(UUID warehouseId) {

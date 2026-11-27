@@ -39,7 +39,10 @@ public class ProductController {
         ProductSummary created = service.create(
                 request == null ? null : request.sku(),
                 request == null ? null : request.name(),
-                request == null ? null : request.baseUnitId());
+                request == null ? null : request.baseUnitId(),
+                request == null ? null : request.categoryId(),
+                request == null ? null : request.brandId(),
+                request == null ? null : request.familyId());
         return ResponseEntity.created(URI.create("/api/v1/products/" + created.id())).body(created);
     }
 
@@ -50,7 +53,11 @@ public class ProductController {
                 request == null ? null : request.sku(),
                 request == null ? null : request.name(),
                 request == null ? null : request.active(),
-                request == null ? null : request.baseUnitId());
+                request == null ? null : request.baseUnitId(),
+                request == null ? null : request.categoryId(),
+                request == null ? null : request.brandId(),
+                request == null ? null : request.familyId(),
+                request == null ? null : request.expectedUpdatedAt());
     }
 
     @GetMapping("/{id}/conversions")
@@ -75,8 +82,9 @@ public class ProductController {
             @PathVariable UUID id,
             @PathVariable UUID alternateUnitId,
             @RequestBody UpdateConversionRequest request) {
-        return ConversionResponse.from(service.updateConversion(
-                id, alternateUnitId, request == null ? null : request.conversionFactor()));
+        return ConversionResponse.from(service.updateConversion(id, alternateUnitId,
+                request == null ? null : request.conversionFactor(), request == null ? null : request.active(),
+                request == null ? null : request.expectedUpdatedAt()));
     }
 
     @ExceptionHandler(InvalidProductException.class)
@@ -102,27 +110,43 @@ public class ProductController {
                 .body(new ErrorResponse("conflict", exception.getMessage()));
     }
 
-    public record CreateProductRequest(String sku, String name, UUID baseUnitId) {}
+    public record CreateProductRequest(
+            String sku, String name, UUID baseUnitId, UUID categoryId, UUID brandId, UUID familyId) {}
 
-    public record UpdateProductRequest(String sku, String name, Boolean active, UUID baseUnitId) {}
+    public record UpdateProductRequest(
+            String sku,
+            String name,
+            Boolean active,
+            UUID baseUnitId,
+            UUID categoryId,
+            UUID brandId,
+            UUID familyId,
+            java.time.Instant expectedUpdatedAt) {}
 
     public record CreateConversionRequest(UUID alternateUnitId, BigDecimal conversionFactor) {}
 
-    public record UpdateConversionRequest(BigDecimal conversionFactor) {}
+    public record UpdateConversionRequest(
+            BigDecimal conversionFactor, Boolean active, java.time.Instant expectedUpdatedAt) {}
 
     public record ConversionResponse(
             UUID productId,
             UUID alternateUnitId,
             String alternateUnitCode,
             String alternateUnitName,
-            String conversionFactor) {
+            String conversionFactor,
+            boolean active,
+            boolean packagingCompatible,
+            java.time.Instant updatedAt) {
         static ConversionResponse from(ProductUnitConversion conversion) {
             return new ConversionResponse(
                     conversion.productId(),
                     conversion.alternateUnitId(),
                     conversion.alternateUnitCode(),
                     conversion.alternateUnitName(),
-                    conversion.conversionFactor().toPlainString());
+                    conversion.conversionFactor().toPlainString(),
+                    conversion.active(),
+                    conversion.packagingCompatible(),
+                    conversion.updatedAt());
         }
     }
 

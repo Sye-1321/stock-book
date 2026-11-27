@@ -8,6 +8,9 @@ public record Product(
         String sku,
         String name,
         UUID baseUnitId,
+        UUID categoryId,
+        UUID brandId,
+        UUID familyId,
         boolean active,
         Instant createdAt,
         Instant updatedAt) {}

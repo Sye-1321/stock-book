@@ -104,7 +104,7 @@ class GoodsReceiptIntegrationTest {
         carton = unitService.create("CARTON", "Cartons");
         soap = productService.create("SOAP", "Bar Soap", piece.id());
         rice = productService.create("RICE", "Rice", piece.id());
-        productService.createConversion(soap.id(), carton.id(), new BigDecimal("24.125"));
+        productService.createConversion(soap.id(), carton.id(), new BigDecimal("24"));
         Location location = locationService.create("NAI", "Nairobi");
         warehouse = warehouseService.create("MAIN", "Main Warehouse", location.id());
     }
@@ -115,24 +115,24 @@ class GoodsReceiptIntegrationTest {
         assertThat(supplier.email()).isEqualTo("sales@acme.test");
         UUID requestId = UUID.randomUUID();
         List<ReceiptLineRequest> lines = List.of(
-                new ReceiptLineRequest(rice.id(), new BigDecimal("3.25"), piece.id()),
+                new ReceiptLineRequest(rice.id(), new BigDecimal("3"), piece.id()),
                 new ReceiptLineRequest(
-                        soap.id(), new BigDecimal("2.5000000000000000001"), carton.id()));
+                        soap.id(), new BigDecimal("2.5"), carton.id()));
         InventoryService.ReceiptResult first = receive(requestId, " INV-100 ", lines);
         InventoryService.ReceiptResult retry = receive(
                 requestId,
                 "INV-100",
                 List.of(
                         new ReceiptLineRequest(
-                                soap.id(), new BigDecimal("2.50000000000000000010"), carton.id()),
-                        new ReceiptLineRequest(rice.id(), new BigDecimal("3.250"), piece.id())));
+                                soap.id(), new BigDecimal("2.50"), carton.id()),
+                        new ReceiptLineRequest(rice.id(), new BigDecimal("3.0"), piece.id())));
 
         assertThat(first.created()).isTrue();
         assertThat(retry.created()).isFalse();
         assertThat(retry.receipt().id()).isEqualTo(first.receipt().id());
         assertThat(first.receipt().supplierDocumentReference()).isEqualTo("INV-100");
-        assertThat(balance(soap.id())).isEqualByComparingTo("60.3125000000000000024125");
-        assertThat(balance(rice.id())).isEqualByComparingTo("3.25");
+        assertThat(balance(soap.id())).isEqualByComparingTo("60");
+        assertThat(balance(rice.id())).isEqualByComparingTo("3");
         assertThat(jdbcClient
                         .sql("""
                                 select count(*) from inventory_movement m
@@ -168,6 +168,21 @@ class GoodsReceiptIntegrationTest {
                                 new ReceiptLineRequest(soap.id(), BigDecimal.ONE, piece.id()),
                                 new ReceiptLineRequest(rice.id(), BigDecimal.ONE, UUID.randomUUID()))))
                 .isInstanceOf(InvalidInventoryException.class);
+        assertThatThrownBy(() -> receive(
+                        UUID.randomUUID(),
+                        null,
+                        List.of(new ReceiptLineRequest(soap.id(), new BigDecimal("1.5"), piece.id()))))
+                .isInstanceOf(InvalidInventoryException.class)
+                .hasMessageContaining("whole number");
+        var packaging = productService.listConversions(soap.id()).getFirst();
+        productService.updateConversion(
+                soap.id(), carton.id(), packaging.conversionFactor(), false, packaging.updatedAt());
+        assertThatThrownBy(() -> receive(
+                        UUID.randomUUID(),
+                        null,
+                        List.of(new ReceiptLineRequest(soap.id(), BigDecimal.ONE, carton.id()))))
+                .isInstanceOf(InvalidInventoryException.class)
+                .hasMessageContaining("active integer packaging");
         supplier = supplierService.update(
                 supplier.id(), supplier.code(), supplier.name(), null, supplier.email(), false);
         assertThatThrownBy(() -> receive(

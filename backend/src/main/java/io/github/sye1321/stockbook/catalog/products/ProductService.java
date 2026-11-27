@@ -1,10 +1,13 @@
 package io.github.sye1321.stockbook.catalog.products;
 
 import io.github.sye1321.stockbook.catalog.products.ProductRepository.ProductConversionNotFoundException;
+import io.github.sye1321.stockbook.catalog.classifications.ClassificationKind;
+import io.github.sye1321.stockbook.catalog.classifications.ClassificationRepository;
 import io.github.sye1321.stockbook.catalog.units.UnitOfMeasureRepository;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -20,12 +23,17 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final UnitOfMeasureRepository unitRepository;
+    private final ClassificationRepository classificationRepository;
     private final Clock clock;
 
     public ProductService(
-            ProductRepository productRepository, UnitOfMeasureRepository unitRepository, Clock clock) {
+            ProductRepository productRepository,
+            UnitOfMeasureRepository unitRepository,
+            ClassificationRepository classificationRepository,
+            Clock clock) {
         this.productRepository = productRepository;
         this.unitRepository = unitRepository;
+        this.classificationRepository = classificationRepository;
         this.clock = clock;
     }
 
@@ -36,12 +44,25 @@ public class ProductService {
 
     @Transactional
     public ProductSummary create(String sku, String name, UUID baseUnitId) {
+        return create(sku, name, baseUnitId, null, null, null);
+    }
+
+    @Transactional
+    public ProductSummary create(
+            String sku,
+            String name,
+            UUID baseUnitId,
+            UUID categoryId,
+            UUID brandId,
+            UUID familyId) {
         if (baseUnitId == null || unitRepository.findById(baseUnitId).isEmpty()) {
             throw new InvalidProductException("Base unit must reference an existing unit of measure");
         }
-        Instant now = clock.instant();
+        validateClassifications(categoryId, brandId, familyId);
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         Product product = new Product(
-                UUID.randomUUID(), normalizeSku(sku), normalizeName(name), baseUnitId, true, now, now);
+                UUID.randomUUID(), normalizeSku(sku), normalizeName(name), baseUnitId,
+                categoryId, brandId, familyId, true, now, now);
         try {
             productRepository.insert(product);
         } catch (DuplicateKeyException exception) {
@@ -53,15 +74,45 @@ public class ProductService {
     @Transactional
     public ProductSummary update(
             UUID id, String sku, String name, Boolean active, UUID requestedBaseUnitId) {
-        if (id == null || active == null) {
-            throw new InvalidProductException("SKU, name and active status are required");
+        throw new InvalidProductException("Product version is required");
+    }
+
+    @Transactional
+    public ProductSummary update(
+            UUID id,
+            String sku,
+            String name,
+            Boolean active,
+            UUID requestedBaseUnitId,
+            UUID categoryId,
+            UUID brandId,
+            UUID familyId,
+            Instant expectedUpdatedAt) {
+        if (id == null || active == null || expectedUpdatedAt == null) {
+            throw new InvalidProductException("SKU, name, active status and product version are required");
         }
         Product existing = productRepository.findById(id).orElseThrow(ProductNotFoundException::new);
         if (requestedBaseUnitId != null && !requestedBaseUnitId.equals(existing.baseUnitId())) {
             throw new InvalidProductException("A product's base unit cannot be changed");
         }
+        if (!java.util.Objects.equals(categoryId, existing.categoryId())) {
+            requireActiveClassification(ClassificationKind.CATEGORY, categoryId);
+        }
+        if (!java.util.Objects.equals(brandId, existing.brandId())) {
+            requireActiveClassification(ClassificationKind.BRAND, brandId);
+        }
+        if (!java.util.Objects.equals(familyId, existing.familyId())) {
+            requireActiveClassification(ClassificationKind.FAMILY, familyId);
+        }
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        Instant next = now.isAfter(existing.updatedAt())
+                ? now
+                : existing.updatedAt().plus(1, ChronoUnit.MICROS);
         try {
-            productRepository.update(id, normalizeSku(sku), normalizeName(name), active, clock.instant());
+            int updated = productRepository.update(
+                    id, normalizeSku(sku), normalizeName(name), active,
+                    categoryId, brandId, familyId, expectedUpdatedAt, next);
+            if (updated != 1) throw new ProductConflictException("The product was changed by another user");
         } catch (DuplicateKeyException exception) {
             throw new ProductConflictException("A product with that SKU already exists");
         }
@@ -79,8 +130,9 @@ public class ProductService {
             UUID productId, UUID alternateUnitId, BigDecimal factor) {
         Product product = requireProduct(productId);
         validateConversion(product, alternateUnitId, factor);
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         try {
-            productRepository.insertConversion(productId, alternateUnitId, factor);
+            productRepository.insertConversion(productId, alternateUnitId, factor, now);
         } catch (DuplicateKeyException exception) {
             throw new ProductConflictException("That alternate unit already has a conversion for this product");
         }
@@ -92,9 +144,35 @@ public class ProductService {
     @Transactional
     public ProductUnitConversion updateConversion(
             UUID productId, UUID alternateUnitId, BigDecimal factor) {
+        throw new InvalidProductException("Active status and packaging version are required");
+    }
+
+    @Transactional
+    public ProductUnitConversion updateConversion(
+            UUID productId,
+            UUID alternateUnitId,
+            BigDecimal factor,
+            Boolean active,
+            Instant expectedUpdatedAt) {
+        productRepository.lockProduct(productId);
         Product product = requireProduct(productId);
         validateConversion(product, alternateUnitId, factor);
-        productRepository.updateConversion(productId, alternateUnitId, factor);
+        if (active == null || expectedUpdatedAt == null) {
+            throw new InvalidProductException("Active status and packaging version are required");
+        }
+        ProductUnitConversion current = productRepository.findConversionForUpdate(productId, alternateUnitId)
+                .orElseThrow(ProductConversionNotFoundException::new);
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        Instant next = now.isAfter(current.updatedAt())
+                ? now
+                : current.updatedAt().plus(1, ChronoUnit.MICROS);
+        if (productRepository.updateConversion(
+                        productId, alternateUnitId, factor, active, expectedUpdatedAt, next) != 1) {
+            throw new ProductConflictException("The packaging configuration was changed by another user");
+        }
+        if (factor.compareTo(current.conversionFactor()) != 0) {
+            productRepository.closeCurrentPricesForPackagingChange(productId, alternateUnitId, next);
+        }
         return productRepository
                 .findConversion(productId, alternateUnitId)
                 .orElseThrow(ProductConversionNotFoundException::new);
@@ -115,6 +193,23 @@ public class ProductService {
         if (factor == null || factor.signum() <= 0) {
             throw new InvalidProductException("Conversion factor must be greater than zero");
         }
+        if (factor.stripTrailingZeros().scale() > 0) {
+            throw new InvalidProductException(
+                    "Packaging conversion factor must produce a positive integer number of base units");
+        }
+    }
+
+    private void validateClassifications(UUID categoryId, UUID brandId, UUID familyId) {
+        requireActiveClassification(ClassificationKind.CATEGORY, categoryId);
+        requireActiveClassification(ClassificationKind.BRAND, brandId);
+        requireActiveClassification(ClassificationKind.FAMILY, familyId);
+    }
+
+    private void requireActiveClassification(ClassificationKind kind, UUID id) {
+        if (id == null) return;
+        var value = classificationRepository.findById(kind, id)
+                .orElseThrow(() -> new InvalidProductException("Classification was not found"));
+        if (!value.active()) throw new InvalidProductException("Classification must be active");
     }
 
     private static String normalizeSku(String sku) {

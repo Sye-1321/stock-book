@@ -10,6 +10,12 @@ public record ProductSummary(
         UUID baseUnitId,
         String baseUnitCode,
         String baseUnitName,
+        UUID categoryId,
+        String categoryName,
+        UUID brandId,
+        String brandName,
+        UUID familyId,
+        String familyName,
         boolean active,
         Instant createdAt,
         Instant updatedAt) {}

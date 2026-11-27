@@ -91,7 +91,7 @@ class InventoryIntegrationTest {
         piece = unitService.create("PIECE", "Pieces");
         carton = unitService.create("CARTON", "Cartons");
         product = productService.create("SOAP", "Bar Soap", piece.id());
-        productService.createConversion(product.id(), carton.id(), new BigDecimal("24.125"));
+        productService.createConversion(product.id(), carton.id(), new BigDecimal("24"));
         Location location = locationService.create("NAI", "Nairobi");
         warehouse = warehouseService.create("MAIN", "Main Warehouse", location.id());
     }
@@ -100,24 +100,63 @@ class InventoryIntegrationTest {
     void snapshotsExactConversionsAndMakesIdenticalRequestRetriesIdempotent() {
         UUID requestId = UUID.randomUUID();
         InventoryService.PostResult first = postMovement(
-                requestId, MovementType.OPENING, "2.5000000000000000001", carton.id(), null);
+                requestId, MovementType.OPENING, "2.5", carton.id(), null);
         InventoryService.PostResult retry = postMovement(
-                requestId, MovementType.OPENING, "2.50000000000000000010", carton.id(), null);
+                requestId, MovementType.OPENING, "2.50", carton.id(), null);
 
         assertThat(first.created()).isTrue();
         assertThat(retry.created()).isFalse();
         assertThat(retry.movement().id()).isEqualTo(first.movement().id());
-        assertThat(first.movement().conversionFactor()).isEqualByComparingTo("24.125");
+        assertThat(first.movement().conversionFactor()).isEqualByComparingTo("24");
         assertThat(first.movement().baseQuantity())
-                .isEqualByComparingTo("60.3125000000000000024125");
-        assertThat(balance()).isEqualByComparingTo("60.3125000000000000024125");
+                .isEqualByComparingTo("60");
+        assertThat(balance()).isEqualByComparingTo("60");
         assertThat(movementCount()).isEqualTo(1);
 
         assertThatThrownBy(() -> postMovement(
                         requestId, MovementType.OPENING, "3", carton.id(), null))
                 .isInstanceOf(InventoryConflictException.class);
-        assertThat(balance()).isEqualByComparingTo("60.3125000000000000024125");
+        assertThat(balance()).isEqualByComparingTo("60");
         assertThat(movementCount()).isEqualTo(1);
+    }
+
+    @Test
+    void newPostingsRejectFractionalBaseQuantitiesAndUnavailablePackaging() {
+        assertThatThrownBy(() -> postMovement(
+                        UUID.randomUUID(), MovementType.OPENING, "1.5", piece.id(), null))
+                .isInstanceOf(InvalidInventoryException.class)
+                .hasMessageContaining("whole number");
+
+        var packaging = productService.listConversions(product.id()).getFirst();
+        productService.updateConversion(
+                product.id(), carton.id(), packaging.conversionFactor(), false, packaging.updatedAt());
+        assertThatThrownBy(() -> postMovement(
+                        UUID.randomUUID(), MovementType.OPENING, "1", carton.id(), null))
+                .isInstanceOf(InvalidInventoryException.class)
+                .hasMessageContaining("active integer packaging");
+
+        jdbcClient.sql("alter table product_unit_conversion disable trigger product_packaging_factor_guard")
+                .update();
+        try {
+            jdbcClient.sql("""
+                            update product_unit_conversion
+                               set conversion_factor = 24.5, active = true
+                             where product_id = :productId and alternate_unit_id = :unitId
+                            """)
+                    .param("productId", product.id())
+                    .param("unitId", carton.id())
+                    .update();
+        } finally {
+            jdbcClient.sql("alter table product_unit_conversion enable trigger product_packaging_factor_guard")
+                    .update();
+        }
+        assertThatThrownBy(() -> postMovement(
+                        UUID.randomUUID(), MovementType.OPENING, "1", carton.id(), null))
+                .isInstanceOf(InvalidInventoryException.class)
+                .hasMessageContaining("active integer packaging");
+        assertThat(movementCount()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from stock_balance").query(Long.class).single())
+                .isZero();
     }
 
     @Test

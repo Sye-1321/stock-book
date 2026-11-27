@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ProductManagement from "./ProductManagement";
 import UnitManagement from "./UnitManagement";
+import ClassificationManagement from "./ClassificationManagement";
 
 type Props = {
   isAdmin: boolean;
@@ -12,6 +13,7 @@ export default function CatalogManagement({
   onSessionExpired,
 }: Props) {
   const [unitsRevision, setUnitsRevision] = useState(0);
+  const [classificationsRevision, setClassificationsRevision] = useState(0);
 
   return (
     <>
@@ -20,9 +22,15 @@ export default function CatalogManagement({
         onSessionExpired={onSessionExpired}
         onUnitsChanged={() => setUnitsRevision((current) => current + 1)}
       />
+      <ClassificationManagement
+        isAdmin={isAdmin}
+        onSessionExpired={onSessionExpired}
+        onChanged={() => setClassificationsRevision((current) => current + 1)}
+      />
       <ProductManagement
         isAdmin={isAdmin}
         unitsRevision={unitsRevision}
+        classificationsRevision={classificationsRevision}
         onSessionExpired={onSessionExpired}
       />
     </>

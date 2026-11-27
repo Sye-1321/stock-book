@@ -44,9 +44,161 @@ afterEach(() => {
 });
 
 describe("catalog management", () => {
+  it("keeps a stale classification draft after the server reports a conflict", async () => {
+    const browser = userEvent.setup();
+    const category = {
+      id: "77777777-7777-4777-8777-777777777777",
+      code: "SOAP",
+      name: "Soap",
+      active: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    mockApi((url, init) => {
+      if (url === "/api/v1/catalog/categories" && !init?.method)
+        return json([category]);
+      if (/^\/api\/v1\/catalog\/(brands|families)$/.test(url) && !init?.method)
+        return json([]);
+      if (
+        url === `/api/v1/catalog/categories/${category.id}` &&
+        init?.method === "PUT"
+      )
+        return json(
+          { message: "The category was changed by another user" },
+          409,
+        );
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    const section = (
+      await screen.findByRole("heading", {
+        name: "Product classifications",
+      })
+    ).parentElement!;
+    const name = within(section).getByLabelText("Name for SOAP");
+    await browser.clear(name);
+    await browser.type(name, "Updated soap");
+    await browser.click(
+      within(section).getByRole("button", { name: "Save SOAP" }),
+    );
+    expect(
+      await within(section).findByText(
+        "The category was changed by another user",
+      ),
+    ).toBeInTheDocument();
+    expect(within(section).getByText("Unsaved changes")).toBeInTheDocument();
+    expect(name).toHaveValue("Updated soap");
+  });
+
+  it("edits classifications and records packaging-specific channel price history", async () => {
+    const browser = userEvent.setup();
+    const category = {
+      id: "77777777-7777-4777-8777-777777777777",
+      code: "SOAP",
+      name: "Soap",
+      active: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const currentPrice = {
+      id: "88888888-8888-4888-8888-888888888888",
+      productId: product.id,
+      unitId: carton.id,
+      unitCode: carton.code,
+      channel: "WHOLESALE" as const,
+      amount: "100.00",
+      conversionFactor: "24",
+      validFrom: "2026-01-01T00:00:00Z",
+      validTo: null,
+    };
+    let pricePayload: Record<string, unknown> | undefined;
+    let pricePosts = 0;
+    mockApi((url, init) => {
+      if (url === "/api/v1/units" && !init?.method)
+        return json([piece, carton]);
+      if (url === "/api/v1/products" && !init?.method)
+        return json([
+          { ...product, categoryId: category.id, categoryName: "Soap" },
+        ]);
+      if (url === "/api/v1/catalog/categories" && !init?.method)
+        return json([category]);
+      if (/^\/api\/v1\/catalog\/(brands|families)$/.test(url) && !init?.method)
+        return json([]);
+      if (url === `/api/v1/products/${product.id}/conversions`)
+        return json([
+          {
+            ...conversion,
+            active: true,
+            packagingCompatible: true,
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ]);
+      if (url === `/api/v1/products/${product.id}/prices` && !init?.method)
+        return json([currentPrice]);
+      if (
+        url === `/api/v1/products/${product.id}/prices` &&
+        init?.method === "POST"
+      ) {
+        pricePosts += 1;
+        pricePayload = JSON.parse(String(init.body));
+        return json(
+          {
+            ...currentPrice,
+            id: "99999999-9999-4999-8999-999999999999",
+            amount: "105.12345678",
+            validFrom: "2026-02-01T00:00:00Z",
+          },
+          201,
+        );
+      }
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    await screen.findByDisplayValue("Bar Soap");
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(
+      await screen.findByText(/WHOLESALE CARTON: 100\.00 .*\(current\)/),
+    ).toBeInTheDocument();
+    await browser.selectOptions(
+      screen.getByLabelText("Price package for SOAP"),
+      carton.id,
+    );
+    await browser.type(
+      screen.getByLabelText("Price amount for SOAP"),
+      "105.12345678",
+    );
+    await browser.click(screen.getByRole("button", { name: "Record price" }));
+    expect(await screen.findByText("Price recorded.")).toBeInTheDocument();
+    expect(pricePayload).toEqual({
+      unitId: carton.id,
+      channel: "WHOLESALE",
+      amount: "105.12345678",
+      expectedCurrentValidFrom: currentPrice.validFrom,
+    });
+    expect(
+      screen.getByText(/WHOLESALE CARTON: 105\.12345678 .*\(current\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/WHOLESALE CARTON: 100\.00 .*\(historical\)/),
+    ).toBeInTheDocument();
+    await browser.type(
+      screen.getByLabelText("Price amount for SOAP"),
+      "1.123456789",
+    );
+    await browser.click(screen.getByRole("button", { name: "Record price" }));
+    expect(
+      await screen.findByText(
+        "Price must be nonnegative with at most eight decimal places.",
+      ),
+    ).toBeInTheDocument();
+    expect(pricePosts).toBe(1);
+  });
+
   it("lists and edits units, products and exact conversion factors", async () => {
     const browser = userEvent.setup();
-    const exactFactor = "12.5001000000000000000001";
+    const exactFactor = "12";
     mockApi((url, init) => {
       if (url === "/api/v1/units" && !init?.method)
         return json([piece, carton, box]);
@@ -69,6 +221,7 @@ describe("catalog management", () => {
       ) {
         expect(JSON.parse(String(init.body))).toEqual({
           conversionFactor: exactFactor,
+          active: true,
         });
         return json({ ...conversion, conversionFactor: exactFactor });
       }
@@ -218,7 +371,85 @@ describe("catalog management", () => {
       sku: "RICE",
       name: "Rice",
       baseUnitId: piece.id,
+      categoryId: null,
+      brandId: null,
+      familyId: null,
     });
+  });
+
+  it("refreshes price history after a packaging factor changes", async () => {
+    const browser = userEvent.setup();
+    let priceRequests = 0;
+    const currentPrice = {
+      id: "88888888-8888-4888-8888-888888888888",
+      productId: product.id,
+      unitId: carton.id,
+      unitCode: carton.code,
+      channel: "WHOLESALE" as const,
+      amount: "100.00000000",
+      conversionFactor: "24",
+      validFrom: "2026-01-01T00:00:00Z",
+      validTo: null,
+    };
+    mockApi((url, init) => {
+      if (url === "/api/v1/units" && !init?.method)
+        return json([piece, carton]);
+      if (url === "/api/v1/products" && !init?.method) return json([product]);
+      if (url === `/api/v1/products/${product.id}/conversions` && !init?.method)
+        return json([
+          {
+            ...conversion,
+            active: true,
+            packagingCompatible: true,
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ]);
+      if (
+        url === `/api/v1/products/${product.id}/conversions/${carton.id}` &&
+        init?.method === "PUT"
+      )
+        return json({
+          ...conversion,
+          conversionFactor: "12",
+          active: true,
+          packagingCompatible: true,
+          updatedAt: "2026-01-02T00:00:00Z",
+        });
+      if (url === `/api/v1/products/${product.id}/prices` && !init?.method) {
+        priceRequests += 1;
+        return json([
+          priceRequests === 1
+            ? currentPrice
+            : {
+                ...currentPrice,
+                validTo: "2026-01-02T00:00:00Z",
+              },
+        ]);
+      }
+    });
+
+    render(<CatalogManagement isAdmin onSessionExpired={vi.fn()} />);
+    await screen.findByDisplayValue("Bar Soap");
+    await browser.click(
+      screen.getByRole("button", { name: "Show details for SOAP" }),
+    );
+    expect(
+      await screen.findByText(/WHOLESALE CARTON: 100\.00000000 .*\(current\)/),
+    ).toBeInTheDocument();
+
+    const factor = screen.getByLabelText("CARTON factor");
+    await browser.clear(factor);
+    await browser.type(factor, "12");
+    await browser.click(
+      screen.getByRole("button", { name: "Save CARTON conversion" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /WHOLESALE CARTON: 100\.00000000 \(1 CARTON = 24 base units\) \(historical\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(priceRequests).toBe(2);
   });
 
   it("loads conversions on expansion, retries failures, and reuses loaded data", async () => {
@@ -297,11 +528,19 @@ describe("catalog management", () => {
       screen.getByRole("button", { name: "Save CARTON conversion" }),
     ).toBeDisabled();
     expect(
-      screen.getByText("Conversion factor must be greater than zero."),
+      screen.getByText(
+        "Packaging factor must be a positive whole number of base units.",
+      ),
     ).toBeInTheDocument();
 
     await browser.clear(factor);
     await browser.type(factor, "-0.0001");
+    expect(
+      screen.getByRole("button", { name: "Save CARTON conversion" }),
+    ).toBeDisabled();
+
+    await browser.clear(factor);
+    await browser.type(factor, "1.5");
     expect(
       screen.getByRole("button", { name: "Save CARTON conversion" }),
     ).toBeDisabled();
@@ -318,7 +557,9 @@ describe("catalog management", () => {
       screen.getByRole("button", { name: "Add conversion for SOAP" }),
     );
     expect(
-      screen.getAllByText("Conversion factor must be greater than zero."),
+      screen.getAllByText(
+        "Packaging factor must be a positive whole number of base units.",
+      ),
     ).toHaveLength(2);
     expect(conversionMutations).toBe(0);
   });

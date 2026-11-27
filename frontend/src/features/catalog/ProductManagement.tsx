@@ -3,18 +3,26 @@ import { ApiError, isRecord, readJson } from "../../app/api";
 import { CsrfRequestError, fetchCsrf } from "../auth/csrf";
 import {
   isConversion,
+  isChannelPrice,
+  isClassification,
   isProduct,
   isUnit,
   Product,
   ProductConversion,
+  ChannelPrice,
+  Classification,
   UnitOfMeasure,
 } from "./types";
 
-type ProductDraft = Pick<Product, "sku" | "name" | "active">;
+type ProductDraft = Pick<
+  Product,
+  "sku" | "name" | "active" | "categoryId" | "brandId" | "familyId"
+>;
 
 type Props = {
   isAdmin: boolean;
   unitsRevision: number;
+  classificationsRevision: number;
   onSessionExpired: (message?: string) => void;
 };
 
@@ -23,7 +31,10 @@ function productModified(product: Product, draft: ProductDraft | undefined) {
     draft !== undefined &&
     (draft.sku !== product.sku ||
       draft.name !== product.name ||
-      draft.active !== product.active)
+      draft.active !== product.active ||
+      draft.categoryId !== (product.categoryId ?? null) ||
+      draft.brandId !== (product.brandId ?? null) ||
+      draft.familyId !== (product.familyId ?? null))
   );
 }
 
@@ -32,17 +43,26 @@ function conversionKey(productId: string, unitId: string) {
 }
 
 function isPositiveDecimal(value: string) {
-  const decimal = value.trim();
-  return /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(decimal) && /[1-9]/.test(decimal);
+  return /^[1-9]\d*$/.test(value.trim());
+}
+
+function isPrice(value: string) {
+  return /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value.trim());
 }
 
 export default function ProductManagement({
   isAdmin,
   unitsRevision,
+  classificationsRevision,
   onSessionExpired,
 }: Props) {
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
+  const [classifications, setClassifications] = useState<{
+    categories: Classification[];
+    brands: Classification[];
+    families: Classification[];
+  }>({ categories: [], brands: [], families: [] });
   const [conversions, setConversions] = useState<
     Record<string, ProductConversion[]>
   >({});
@@ -59,6 +79,11 @@ export default function ProductManagement({
     Record<string, boolean>
   >({});
   const [conversionErrors, setConversionErrors] = useState<
+    Record<string, string | undefined>
+  >({});
+  const [prices, setPrices] = useState<Record<string, ChannelPrice[]>>({});
+  const [priceLoading, setPriceLoading] = useState<Record<string, boolean>>({});
+  const [priceErrors, setPriceErrors] = useState<
     Record<string, string | undefined>
   >({});
   const [loading, setLoading] = useState(true);
@@ -81,7 +106,13 @@ export default function ProductManagement({
     setLoadSucceeded(false);
     void (async () => {
       try {
-        const [productResponse, unitResponse] = await Promise.all([
+        const [
+          productResponse,
+          unitResponse,
+          categoryResponse,
+          brandResponse,
+          familyResponse,
+        ] = await Promise.all([
           fetch("/api/v1/products", {
             headers: { Accept: "application/json" },
             signal: controller.signal,
@@ -90,28 +121,53 @@ export default function ProductManagement({
             headers: { Accept: "application/json" },
             signal: controller.signal,
           }),
+          ...(["categories", "brands", "families"] as const).map((group) =>
+            fetch(`/api/v1/catalog/${group}`, {
+              headers: { Accept: "application/json" },
+              signal: controller.signal,
+            }),
+          ),
         ]);
-        if (productResponse.status === 401 || unitResponse.status === 401) {
+        const allResponses = [
+          productResponse,
+          unitResponse,
+          categoryResponse,
+          brandResponse,
+          familyResponse,
+        ];
+        if (allResponses.some((response) => response.status === 401)) {
           onSessionExpired();
           return;
         }
-        const [productBody, unitBody] = await Promise.all([
-          readJson(productResponse),
-          readJson(unitResponse),
-        ]);
+        const [productBody, unitBody, categoryBody, brandBody, familyBody] =
+          await Promise.all(allResponses.map(readJson));
         if (
           !productResponse.ok ||
           !unitResponse.ok ||
+          !categoryResponse.ok ||
+          !brandResponse.ok ||
+          !familyResponse.ok ||
           !Array.isArray(productBody) ||
           !productBody.every(isProduct) ||
           !Array.isArray(unitBody) ||
-          !unitBody.every(isUnit)
+          !unitBody.every(isUnit) ||
+          !Array.isArray(categoryBody) ||
+          !categoryBody.every(isClassification) ||
+          !Array.isArray(brandBody) ||
+          !brandBody.every(isClassification) ||
+          !Array.isArray(familyBody) ||
+          !familyBody.every(isClassification)
         ) {
           setMessage("Unable to load products.");
           return;
         }
         setProducts(productBody);
         setUnits(unitBody);
+        setClassifications({
+          categories: categoryBody,
+          brands: brandBody,
+          families: familyBody,
+        });
         setLoadSucceeded(true);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
@@ -122,7 +178,7 @@ export default function ProductManagement({
       }
     })();
     return () => controller.abort();
-  }, [onSessionExpired, unitsRevision]);
+  }, [onSessionExpired, unitsRevision, classificationsRevision]);
 
   async function loadConversions(productId: string, retry = false) {
     if (!retry && conversions[productId] !== undefined) return;
@@ -162,6 +218,37 @@ export default function ProductManagement({
     }
   }
 
+  async function loadPrices(productId: string, retry = false) {
+    if (!retry && prices[productId] !== undefined) return;
+    setPriceLoading((current) => ({ ...current, [productId]: true }));
+    setPriceErrors((current) => ({ ...current, [productId]: undefined }));
+    try {
+      const response = await fetch(`/api/v1/products/${productId}/prices`, {
+        headers: { Accept: "application/json" },
+      });
+      if (response.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      const body = await readJson(response);
+      if (!response.ok || !Array.isArray(body) || !body.every(isChannelPrice)) {
+        setPriceErrors((current) => ({
+          ...current,
+          [productId]: "Unable to load prices.",
+        }));
+        return;
+      }
+      setPrices((current) => ({ ...current, [productId]: body }));
+    } catch {
+      setPriceErrors((current) => ({
+        ...current,
+        [productId]: "Price service unavailable.",
+      }));
+    } finally {
+      setPriceLoading((current) => ({ ...current, [productId]: false }));
+    }
+  }
+
   function toggleProductDetails(productId: string) {
     const expanding = !expandedProducts[productId];
     setExpandedProducts((current) => ({
@@ -174,6 +261,12 @@ export default function ProductManagement({
       !conversionLoading[productId]
     )
       void loadConversions(productId);
+    if (
+      expanding &&
+      prices[productId] === undefined &&
+      !priceLoading[productId]
+    )
+      void loadPrices(productId);
   }
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
@@ -195,6 +288,9 @@ export default function ProductManagement({
           sku: data.get("productSku"),
           name: data.get("productName"),
           baseUnitId: data.get("productBaseUnitId"),
+          categoryId: data.get("productCategoryId") || null,
+          brandId: data.get("productBrandId") || null,
+          familyId: data.get("productFamilyId") || null,
         }),
       });
       const body = await readJson(response);
@@ -204,6 +300,7 @@ export default function ProductManagement({
           [...current, body].sort((a, b) => a.sku.localeCompare(b.sku)),
         );
         setConversions((current) => ({ ...current, [body.id]: [] }));
+        setPrices((current) => ({ ...current, [body.id]: [] }));
         form.reset();
         setMessage("Product created.");
       } else {
@@ -224,6 +321,9 @@ export default function ProductManagement({
           sku: product.sku,
           name: product.name,
           active: product.active,
+          categoryId: product.categoryId ?? null,
+          brandId: product.brandId ?? null,
+          familyId: product.familyId ?? null,
         }),
         ...changes,
       };
@@ -237,7 +337,7 @@ export default function ProductManagement({
   async function saveProduct(product: Product, draft: ProductDraft) {
     await submit(
       `/api/v1/products/${product.id}`,
-      draft,
+      { ...draft, expectedUpdatedAt: product.updatedAt },
       (body) => {
         if (!isProduct(body)) return false;
         setProducts((current) =>
@@ -264,7 +364,9 @@ export default function ProductManagement({
     const data = new FormData(form);
     const conversionFactor = String(data.get("conversionFactor") ?? "").trim();
     if (!isPositiveDecimal(conversionFactor)) {
-      setMessage("Conversion factor must be greater than zero.");
+      setMessage(
+        "Packaging factor must be a positive whole number of base units.",
+      );
       return;
     }
     await submit(
@@ -296,13 +398,19 @@ export default function ProductManagement({
     factor: string,
   ) {
     if (!isPositiveDecimal(factor)) {
-      setMessage("Conversion factor must be greater than zero.");
+      setMessage(
+        "Packaging factor must be a positive whole number of base units.",
+      );
       return;
     }
     const key = conversionKey(product.id, conversion.alternateUnitId);
-    await submit(
+    const saved = await submit(
       `/api/v1/products/${product.id}/conversions/${conversion.alternateUnitId}`,
-      { conversionFactor: factor },
+      {
+        conversionFactor: factor,
+        active: conversion.active ?? true,
+        expectedUpdatedAt: conversion.updatedAt,
+      },
       (body) => {
         if (!isConversion(body)) return false;
         setConversions((current) => ({
@@ -320,6 +428,58 @@ export default function ProductManagement({
         return true;
       },
       "Unable to update conversion.",
+    );
+    if (saved && prices[product.id] !== undefined) {
+      await loadPrices(product.id, true);
+    }
+  }
+
+  async function setPrice(event: FormEvent<HTMLFormElement>, product: Product) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const amount = String(data.get("amount") ?? "").trim();
+    if (!isPrice(amount)) {
+      setMessage(
+        "Price must be nonnegative with at most eight decimal places.",
+      );
+      return;
+    }
+    const unitId = String(data.get("unitId"));
+    const channel = String(data.get("channel"));
+    const current = (prices[product.id] ?? []).find(
+      (price) =>
+        price.unitId === unitId &&
+        price.channel === channel &&
+        price.validTo === null,
+    );
+    await submit(
+      `/api/v1/products/${product.id}/prices`,
+      {
+        unitId,
+        channel,
+        amount,
+        expectedCurrentValidFrom: current?.validFrom ?? null,
+      },
+      (body) => {
+        if (!isChannelPrice(body)) return false;
+        setPrices((state) => ({
+          ...state,
+          [product.id]: [
+            body,
+            ...(state[product.id] ?? []).map((price) =>
+              price.id === current?.id
+                ? { ...price, validTo: body.validFrom }
+                : price,
+            ),
+          ],
+        }));
+        form.reset();
+        setMessage("Price recorded.");
+        return true;
+      },
+      "Unable to record price.",
+      "POST",
     );
   }
 
@@ -344,16 +504,20 @@ export default function ProductManagement({
         body: JSON.stringify(payload),
       });
       const body = await readJson(response);
-      if (response.status === 401) onSessionExpired();
-      else if (!response.ok || !accept(body)) {
+      if (response.status === 401) {
+        onSessionExpired();
+      } else if (!response.ok || !accept(body)) {
         const error = isRecord(body) ? (body as ApiError) : undefined;
         setMessage(error?.message ?? fallback);
+      } else {
+        return true;
       }
     } catch (error) {
       handleFailure(error);
     } finally {
       setBusy(false);
     }
+    return false;
   }
 
   return (
@@ -383,6 +547,29 @@ export default function ProductManagement({
               ))}
             </select>
           </label>
+          {(["Category", "Brand", "Family"] as const).map((label) => {
+            const group =
+              label === "Category"
+                ? "categories"
+                : label === "Family"
+                  ? "families"
+                  : "brands";
+            return (
+              <label key={label}>
+                {label}
+                <select name={`product${label}Id`} defaultValue="">
+                  <option value="">None</option>
+                  {classifications[group]
+                    .filter((value) => value.active)
+                    .map((value) => (
+                      <option key={value.id} value={value.id}>
+                        {value.code} — {value.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            );
+          })}
           <button type="submit" disabled={busy || units.length === 0}>
             Create product
           </button>
@@ -435,6 +622,36 @@ export default function ProductManagement({
                   <p>
                     Base unit: {product.baseUnitCode} — {product.baseUnitName}
                   </p>
+                  {(["Category", "Brand", "Family"] as const).map((label) => {
+                    const field = `${label.toLowerCase()}Id` as
+                      "categoryId" | "brandId" | "familyId";
+                    const group =
+                      label === "Category"
+                        ? "categories"
+                        : label === "Family"
+                          ? "families"
+                          : "brands";
+                    return (
+                      <label key={label}>
+                        {label} for {product.sku}
+                        <select
+                          value={draft[field] ?? ""}
+                          onChange={(event) =>
+                            editProduct(product, {
+                              [field]: event.target.value || null,
+                            })
+                          }
+                        >
+                          <option value="">None</option>
+                          {classifications[group].map((value) => (
+                            <option key={value.id} value={value.id}>
+                              {value.code} — {value.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })}
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -531,10 +748,19 @@ export default function ProductManagement({
                             1 {conversion.alternateUnitCode} = {factor}{" "}
                             {product.baseUnitCode}
                           </p>
+                          {conversion.packagingCompatible === false && (
+                            <p role="alert">
+                              Legacy conversion is not a whole-number packaging
+                              configuration. Historical quantities are
+                              preserved; enter a positive whole number before
+                              saving.
+                            </p>
+                          )}
                           {conversionModified && <p>Unsaved changes</p>}
                           {conversionModified && !factorValid && (
                             <p role="alert">
-                              Conversion factor must be greater than zero.
+                              Packaging factor must be a positive whole number
+                              of base units.
                             </p>
                           )}
                           <button
@@ -595,6 +821,75 @@ export default function ProductManagement({
                         </button>
                       </form>
                     )}
+                  <h3>Channel prices for {product.sku}</h3>
+                  {priceLoading[product.id] && <p>Loading prices…</p>}
+                  {priceErrors[product.id] && (
+                    <>
+                      <p role="alert">{priceErrors[product.id]}</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadPrices(product.id, true)}
+                      >
+                        Retry prices for {product.sku}
+                      </button>
+                    </>
+                  )}
+                  {prices[product.id] !== undefined &&
+                    !priceErrors[product.id] &&
+                    prices[product.id].length === 0 && <p>No price history.</p>}
+                  {(prices[product.id] ?? []).map((price) => (
+                    <p key={price.id}>
+                      {price.channel} {price.unitCode}: {price.amount} (
+                      {price.conversionFactor === null
+                        ? "historical packaging basis unavailable"
+                        : `1 ${price.unitCode} = ${price.conversionFactor} base units`}
+                      ){price.validTo === null ? " (current)" : " (historical)"}
+                    </p>
+                  ))}
+                  {isAdmin && prices[product.id] !== undefined && (
+                    <form
+                      className="management-form conversion-form"
+                      onSubmit={(event) => setPrice(event, product)}
+                    >
+                      <label>
+                        Price channel for {product.sku}
+                        <select name="channel" defaultValue="WHOLESALE">
+                          <option value="WHOLESALE">Wholesale</option>
+                          <option value="RETAIL">Retail</option>
+                        </select>
+                      </label>
+                      <label>
+                        Price package for {product.sku}
+                        <select name="unitId" defaultValue={product.baseUnitId}>
+                          <option value={product.baseUnitId}>
+                            {product.baseUnitCode} (base unit)
+                          </option>
+                          {productConversions
+                            .filter(
+                              (conversion) =>
+                                (conversion.active ?? true) &&
+                                (conversion.packagingCompatible ??
+                                  /^\d+$/.test(conversion.conversionFactor)),
+                            )
+                            .map((conversion) => (
+                              <option
+                                key={conversion.alternateUnitId}
+                                value={conversion.alternateUnitId}
+                              >
+                                {conversion.alternateUnitCode}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label>
+                        Price amount for {product.sku}
+                        <input name="amount" inputMode="decimal" required />
+                      </label>
+                      <button type="submit" disabled={busy}>
+                        Record price
+                      </button>
+                    </form>
+                  )}
                 </div>
               )}
             </article>

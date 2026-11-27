@@ -45,6 +45,13 @@ class FinancialLedgerMigrationTest {
                 .migrate();
         insertExistingV13Funding();
 
+        Flyway.configure()
+                .dataSource(postgres.getJdbcUrl(), MIGRATION_USER, MIGRATION_PASSWORD)
+                .target("16")
+                .load()
+                .migrate();
+        insertExistingV16Price();
+
         Flyway flyway = Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), MIGRATION_USER, MIGRATION_PASSWORD)
                 .load();
@@ -56,7 +63,8 @@ class FinancialLedgerMigrationTest {
         assertRuntimeCannotBypassLedgerProtection();
         assertRestrictedRuntimeCanPostAuthorizedFundingAndReversal();
         assertTemporaryObjectsCannotShadowDefinerReferences();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("15");
+        assertCatalogRuntimePrivileges();
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("18");
     }
 
     private void createProductionRoles() throws SQLException {
@@ -197,6 +205,19 @@ class FinancialLedgerMigrationTest {
             assertThat(queryLong(connection, "select count(*) from goods_receipt")).isEqualTo(1);
             assertThat(queryLong(connection, "select count(*) from goods_receipt_line")).isEqualTo(1);
             assertThat(queryString(connection,
+                            "select id::text from product where sku = 'LEGACY'"))
+                    .isEqualTo("00000000-0000-0000-0000-000000000051");
+            assertThat(queryString(connection,
+                            "select conversion_factor::text from product_unit_conversion"
+                                    + " where product_id = '00000000-0000-0000-0000-000000000051'"
+                                    + " and alternate_unit_id = '00000000-0000-0000-0000-000000000042'"))
+                    .isEqualTo("24.5");
+            assertThat(queryString(connection,
+                            "select conversion_factor::text || ':' || base_quantity::text"
+                                    + " from goods_receipt_line"
+                                    + " where id = '00000000-0000-0000-0000-000000000083'"))
+                    .isEqualTo("1:3");
+            assertThat(queryString(connection,
                             "select s.id::text from supplier s"
                                     + " join party p on p.id = s.party_id"
                                     + " where s.code = 'LEGACY' and p.name = 'Legacy Supplier'"))
@@ -209,6 +230,18 @@ class FinancialLedgerMigrationTest {
                             "select count(*) from inventory_movement"
                                     + " where receipt_line_id = '00000000-0000-0000-0000-000000000083'"))
                     .isEqualTo(1);
+            assertThat(queryString(connection,
+                            "select amount::text from product_channel_price"
+                                    + " where id = '00000000-0000-0000-0000-000000000161'"))
+                    .isEqualTo("19.99000000");
+            assertThat(queryString(connection,
+                            "select conversion_factor::text from product_channel_price"
+                                    + " where id = '00000000-0000-0000-0000-000000000161'"))
+                    .isNull();
+            assertThat(queryBoolean(connection,
+                            "select valid_to is not null from product_channel_price"
+                                    + " where id = '00000000-0000-0000-0000-000000000161'"))
+                    .isTrue();
             assertThat(queryString(connection,
                             "select base_quantity::text from stock_balance"
                                     + " where warehouse_id = '00000000-0000-0000-0000-000000000031'"))
@@ -248,6 +281,14 @@ class FinancialLedgerMigrationTest {
                         ('00000000-0000-0000-0000-000000000013',
                          'OWNER_FUNDING_APPROVE',
                          '00000000-0000-0000-0000-000000000011', now());
+                    insert into unit_of_measure (id, code, name)
+                    values ('00000000-0000-0000-0000-000000000042', 'CARTON', 'Cartons');
+                    insert into product_unit_conversion (
+                        product_id, alternate_unit_id, conversion_factor
+                    ) values (
+                        '00000000-0000-0000-0000-000000000051',
+                        '00000000-0000-0000-0000-000000000042', 24.5
+                    );
                     select finance_create_period(
                         '00000000-0000-0000-0000-000000000111',
                         'Existing V13 funding period', date '2016-01-01', date '2016-12-31'
@@ -261,6 +302,77 @@ class FinancialLedgerMigrationTest {
                         '00000000-0000-0000-0000-000000000114'
                     );
                     """);
+        }
+    }
+
+    private void insertExistingV16Price() throws SQLException {
+        try (Connection connection = migrationConnection(); var statement = connection.createStatement()) {
+            statement.execute("""
+                    insert into unit_of_measure (id, code, name)
+                    values ('00000000-0000-0000-0000-000000000043', 'BOX', 'Boxes');
+                    insert into product_unit_conversion (
+                        product_id, alternate_unit_id, conversion_factor
+                    ) values (
+                        '00000000-0000-0000-0000-000000000051',
+                        '00000000-0000-0000-0000-000000000043', 12
+                    );
+                    insert into product_channel_price (
+                        id, product_id, unit_id, channel, amount, valid_from, recorded_by
+                    ) values (
+                        '00000000-0000-0000-0000-000000000161',
+                        '00000000-0000-0000-0000-000000000051',
+                        '00000000-0000-0000-0000-000000000043',
+                        'WHOLESALE', 19.99, timestamptz '2020-01-01 00:00:00Z',
+                        '00000000-0000-0000-0000-000000000011'
+                    );
+                    update product_unit_conversion
+                       set conversion_factor = 24, updated_at = now()
+                     where product_id = '00000000-0000-0000-0000-000000000051'
+                       and alternate_unit_id = '00000000-0000-0000-0000-000000000043'
+                    """);
+        }
+    }
+
+    private void assertCatalogRuntimePrivileges() throws SQLException {
+        try (Connection connection = adminConnection()) {
+            assertThat(queryBoolean(connection,
+                            "select has_table_privilege('" + RUNTIME_USER
+                                    + "', 'public.product_channel_price', 'SELECT')"))
+                    .isTrue();
+            assertThat(queryBoolean(connection,
+                            "select has_table_privilege('" + RUNTIME_USER
+                                    + "', 'public.product_channel_price', 'INSERT,UPDATE,DELETE,TRUNCATE')"))
+                    .isFalse();
+            assertThat(queryBoolean(connection,
+                            "select has_function_privilege('" + RUNTIME_USER
+                                    + "', 'public.catalog_supersede_channel_price(uuid,uuid,uuid,varchar,numeric,numeric,timestamptz,timestamptz,uuid)', 'EXECUTE')"))
+                    .isTrue();
+        }
+        try (Connection connection = runtimeConnection(); var statement = connection.createStatement()) {
+            assertSqlState(() -> statement.execute("update product_channel_price set amount = 1"), "42501");
+            assertSqlState(() -> statement.execute("delete from product_channel_price"), "42501");
+            assertSqlState(() -> statement.execute("truncate product_channel_price"), "42501");
+            assertSqlState(() -> statement.execute("insert into product_channel_price ("
+                    + "id, product_id, unit_id, channel, amount, conversion_factor, valid_from, recorded_by) "
+                    + "values (gen_random_uuid(), '00000000-0000-0000-0000-000000000051', "
+                    + "'00000000-0000-0000-0000-000000000042', 'WHOLESALE', 1, 24.5, now(), "
+                    + "'00000000-0000-0000-0000-000000000011')"), "42501");
+
+            statement.execute("select catalog_supersede_channel_price("
+                    + "'00000000-0000-0000-0000-000000000162', "
+                    + "'00000000-0000-0000-0000-000000000051', "
+                    + "'00000000-0000-0000-0000-000000000041', 'WHOLESALE', "
+                    + "20.12345678, 1, timestamptz '2020-01-02 00:00:00Z', null, "
+                    + "'00000000-0000-0000-0000-000000000011')");
+            assertThat(queryString(connection,
+                            "select amount::text from product_channel_price"
+                                    + " where id = '00000000-0000-0000-0000-000000000162'"))
+                    .isEqualTo("20.12345678");
+            assertSqlState(() -> statement.execute("select catalog_supersede_channel_price("
+                    + "gen_random_uuid(), '00000000-0000-0000-0000-000000000051', "
+                    + "'00000000-0000-0000-0000-000000000041', 'WHOLESALE', "
+                    + "20.123456789, 1, now(), timestamptz '2020-01-02 00:00:00Z', "
+                    + "'00000000-0000-0000-0000-000000000011')"), "23514");
         }
     }
 
