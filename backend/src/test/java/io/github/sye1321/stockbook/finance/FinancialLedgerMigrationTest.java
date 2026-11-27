@@ -56,7 +56,7 @@ class FinancialLedgerMigrationTest {
         assertRuntimeCannotBypassLedgerProtection();
         assertRestrictedRuntimeCanPostAuthorizedFundingAndReversal();
         assertTemporaryObjectsCannotShadowDefinerReferences();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("15");
     }
 
     private void createProductionRoles() throws SQLException {
@@ -197,6 +197,19 @@ class FinancialLedgerMigrationTest {
             assertThat(queryLong(connection, "select count(*) from goods_receipt")).isEqualTo(1);
             assertThat(queryLong(connection, "select count(*) from goods_receipt_line")).isEqualTo(1);
             assertThat(queryString(connection,
+                            "select s.id::text from supplier s"
+                                    + " join party p on p.id = s.party_id"
+                                    + " where s.code = 'LEGACY' and p.name = 'Legacy Supplier'"))
+                    .isEqualTo("00000000-0000-0000-0000-000000000061");
+            assertThat(queryString(connection,
+                            "select supplier_id::text from goods_receipt"
+                                    + " where id = '00000000-0000-0000-0000-000000000081'"))
+                    .isEqualTo("00000000-0000-0000-0000-000000000061");
+            assertThat(queryLong(connection,
+                            "select count(*) from inventory_movement"
+                                    + " where receipt_line_id = '00000000-0000-0000-0000-000000000083'"))
+                    .isEqualTo(1);
+            assertThat(queryString(connection,
                             "select base_quantity::text from stock_balance"
                                     + " where warehouse_id = '00000000-0000-0000-0000-000000000031'"))
                     .isEqualTo("11");
@@ -264,6 +277,14 @@ class FinancialLedgerMigrationTest {
             assertThat(queryBoolean(connection,
                             "select has_table_privilege('" + RUNTIME_USER
                                     + "', 'public.journal_entry', 'SELECT')"))
+                    .isTrue();
+            assertThat(queryBoolean(connection,
+                            "select has_table_privilege('" + RUNTIME_USER
+                                    + "', 'public.party', 'SELECT,INSERT,UPDATE,DELETE')"))
+                    .isTrue();
+            assertThat(queryBoolean(connection,
+                            "select has_table_privilege('" + RUNTIME_USER
+                                    + "', 'public.customer', 'SELECT,INSERT,UPDATE,DELETE')"))
                     .isTrue();
             assertThat(queryBoolean(connection,
                             "select has_table_privilege('" + RUNTIME_USER

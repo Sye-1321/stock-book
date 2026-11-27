@@ -7,6 +7,7 @@ import WarehouseManagement from "../features/warehouses/WarehouseManagement";
 import InventoryManagement from "../features/inventory/InventoryManagement";
 import SupplierManagement from "../features/suppliers/SupplierManagement";
 import GoodsReceiving from "../features/receiving/GoodsReceiving";
+import CustomerManagement from "../features/customers/CustomerManagement";
 
 type Props = {
   user: User;
@@ -51,6 +52,10 @@ export default function AuthenticatedWorkspace({
         onSuppliersChanged={() =>
           setSuppliersRevision((current) => current + 1)
         }
+      />
+      <CustomerManagement
+        isAdmin={isAdmin}
+        onSessionExpired={onSessionExpired}
       />
       {isAdmin && (
         <GoodsReceiving

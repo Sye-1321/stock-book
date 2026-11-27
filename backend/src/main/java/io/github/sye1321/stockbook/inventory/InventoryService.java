@@ -289,7 +289,9 @@ public class InventoryService {
         Supplier supplier = supplierRepository
                 .findByIdForUpdate(supplierId)
                 .orElseThrow(() -> new InvalidInventoryException("Supplier was not found"));
-        if (!supplier.active()) throw new InvalidInventoryException("Supplier must be active");
+        if (!supplier.active() || !supplier.partyActive()) {
+            throw new InvalidInventoryException("Supplier and its party must be active");
+        }
         InventoryRepository.WarehouseState warehouse = requireActiveWarehouse(warehouseId);
         if (!warehouse.active() || !warehouse.locationActive()) {
             throw new InvalidInventoryException("Warehouse and its location must be active");

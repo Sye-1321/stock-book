@@ -51,7 +51,10 @@ public class SupplierController {
                 request == null ? null : request.name(),
                 request == null ? null : request.phone(),
                 request == null ? null : request.email(),
-                request == null ? null : request.active());
+                request == null ? null : request.active(),
+                request == null ? null : request.partyActive(),
+                request == null ? null : request.updateParty(),
+                request == null ? null : request.partyUpdatedAt());
     }
 
     @ExceptionHandler(InvalidSupplierException.class)
@@ -72,7 +75,14 @@ public class SupplierController {
     }
 
     public record SupplierRequest(
-            String code, String name, String phone, String email, Boolean active) {}
+            String code,
+            String name,
+            String phone,
+            String email,
+            Boolean active,
+            Boolean partyActive,
+            Boolean updateParty,
+            java.time.Instant partyUpdatedAt) {}
 
     public record ErrorResponse(String code, String message) {}
 }

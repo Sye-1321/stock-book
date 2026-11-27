@@ -5,10 +5,13 @@ import java.util.UUID;
 
 public record Supplier(
         UUID id,
+        UUID partyId,
         String code,
         String name,
         String phone,
         String email,
         boolean active,
+        boolean partyActive,
+        Instant partyUpdatedAt,
         Instant createdAt,
         Instant updatedAt) {}

@@ -85,7 +85,9 @@ class GoodsReceiptIntegrationTest {
         jdbcClient.sql("delete from product_unit_conversion").update();
         jdbcClient.sql("delete from product").update();
         jdbcClient.sql("delete from unit_of_measure").update();
+        jdbcClient.sql("delete from customer").update();
         jdbcClient.sql("delete from supplier").update();
+        jdbcClient.sql("delete from party").update();
         jdbcClient.sql("delete from warehouse").update();
         jdbcClient.sql("delete from business_location").update();
         jdbcClient.sql("delete from spring_session").update();

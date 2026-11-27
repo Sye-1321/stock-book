@@ -4,11 +4,14 @@ import { CsrfRequestError, fetchCsrf } from "../auth/csrf";
 
 export type Supplier = {
   id: string;
+  partyId?: string;
   code: string;
   name: string;
   phone: string | null;
   email: string | null;
   active: boolean;
+  partyActive?: boolean;
+  partyUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -16,7 +19,7 @@ export type Supplier = {
 type SupplierDraft = Pick<
   Supplier,
   "code" | "name" | "phone" | "email" | "active"
->;
+> & { partyActive: boolean };
 
 type Props = {
   isAdmin: boolean;
@@ -45,7 +48,17 @@ function modified(supplier: Supplier, draft: SupplierDraft | undefined) {
       draft.name !== supplier.name ||
       draft.phone !== supplier.phone ||
       draft.email !== supplier.email ||
-      draft.active !== supplier.active)
+      draft.active !== supplier.active ||
+      draft.partyActive !== (supplier.partyActive ?? true))
+  );
+}
+
+function sharedModified(supplier: Supplier, draft: SupplierDraft) {
+  return (
+    draft.name !== supplier.name ||
+    draft.phone !== supplier.phone ||
+    draft.email !== supplier.email ||
+    draft.partyActive !== (supplier.partyActive ?? true)
   );
 }
 
@@ -150,6 +163,7 @@ export default function SupplierManagement({
           phone: supplier.phone,
           email: supplier.email,
           active: supplier.active,
+          partyActive: supplier.partyActive ?? true,
         }),
         ...changes,
       };
@@ -172,7 +186,11 @@ export default function SupplierManagement({
           "Content-Type": "application/json",
           [csrf.headerName]: csrf.token,
         },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          ...draft,
+          updateParty: sharedModified(supplier, draft),
+          partyUpdatedAt: supplier.partyUpdatedAt,
+        }),
       });
       const body = await readJson(response);
       if (response.status === 401) onSessionExpired();
@@ -288,6 +306,16 @@ export default function SupplierManagement({
                     />
                     Active
                   </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={draft.partyActive}
+                      onChange={(event) =>
+                        edit(supplier, { partyActive: event.target.checked })
+                      }
+                    />
+                    Shared party active
+                  </label>
                   {changed && <p>Unsaved changes</p>}
                   <button
                     type="button"
@@ -302,6 +330,9 @@ export default function SupplierManagement({
                   <h3>{supplier.name}</h3>
                   <p>{supplier.code}</p>
                   <p>{supplier.active ? "Active" : "Inactive"}</p>
+                  {supplier.partyActive === false && (
+                    <p>Shared party inactive</p>
+                  )}
                 </>
               )}
             </article>

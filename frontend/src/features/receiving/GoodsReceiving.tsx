@@ -278,7 +278,10 @@ export default function GoodsReceiving({
                 Select a supplier
               </option>
               {suppliers
-                .filter((supplier) => supplier.active)
+                .filter(
+                  (supplier) =>
+                    supplier.active && supplier.partyActive !== false,
+                )
                 .map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>
                     {supplier.code} — {supplier.name}
