@@ -10,6 +10,9 @@ spring:
       validation-timeout: 1000
   flyway:
     enabled: true
+    url: ${MIGRATION_DB_URL:${DB_URL:jdbc:postgresql://localhost:5432/stock_book}}
+    user: ${MIGRATION_DB_USER:${DB_USER:stock_book}}
+    password: ${MIGRATION_DB_PASSWORD:${DB_PASSWORD:stock_book}}
   session:
     jdbc:
       initialize-schema: never

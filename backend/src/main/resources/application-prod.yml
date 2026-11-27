@@ -3,3 +3,7 @@ server:
     session:
       cookie:
         secure: true
+spring:
+  flyway:
+    user: ${MIGRATION_DB_USER}
+    password: ${MIGRATION_DB_PASSWORD}
